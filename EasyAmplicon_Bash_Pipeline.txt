@@ -1,0 +1,2785 @@
+# EasyAmplicon
+
+# Author Authors: Yong-Xin Liu, Tong Chen, etc.
+# Version: v1.18
+# Update Update: 2023-2-3
+# System requirement: Windows 10+ / Mac OS 10.12+ / Ubuntu 20.04+
+# Citation Reference: Liu, et al. 2023. EasyAmplicon: An easy-to-use, open-source, reproducible, and community-based
+# pipeline for amplicon data analysis in microbiome research. iMeta 2: e83. https://doi.org/10.1002/imt2.83
+
+
+# Set up the work directory (wd) and software database (db) directories
+# Add environmental variables and enter work directory
+
+# **Every time you open Rstudio you must run the following 4 lines Run it**, optionally replace ${db} with the EasyMicrobiome installation location
+
+wd="C:\Users\..."
+
+db="C:\Users\..."
+
+seq="D:\..."
+
+PATH=$PATH:${db}/win
+
+PATH=$PATH:${seq}
+
+cd "${wd}"
+
+
+
+
+
+######################
+######################
+### 1. start files ###
+######################
+######################
+
+
+
+# 1. analysis process pipeline.sh
+# 2. sample metadata.txt, stored in result directory
+# 3. sequencing data fastq files in the seq directory, usually ending with `.fq.gz`, one pair of files per sample
+# 4. create a temporary file storage directory, which can be deleted at the end of the analysis
+mkdir -p temp
+
+
+
+
+
+
+##################################################
+### 1.1. metadata/experimental design metadata ###
+##################################################
+
+
+# Prepare sample metadata result/metadata_before.txt
+# csvtk statistics table rows (number of samples, without headers) number of columns, -t set column separations to tabs, default is ;
+csvtk -t stat result/metadata_before.txt
+
+# file                         num_cols   num_rows
+# result/metadata_before.txt         14         60
+
+
+# metadata with at least 3 columns, first column is SampleID, last column is Description
+
+# cat view the file, -A display symbols, "|" for the pipe character to achieve command concatenation, head display file header, -n3 control range of the first 3 lines
+
+cat -A result/metadata_before.txt | head -n3
+
+
+# windows users with ^M at the end, run sed to remove it, then check with cat -A
+sed 's/\r//' result/metadata_before.txt > result/metadata.txt
+cat -A result/metadata.txt | head -n3
+
+
+
+# rename the sequence file names to the id column in the metadata.txt
+while IFS=$'\t' read -r id sample_id novogen_id pa_or_bcc species sex age diabetes FEV1 pulmozyme tobramycin compliance notes; do
+    # Check if the sequence files exist
+    if [[ -e "${seq}/${novogen_id}_1.fq.gz" && -e "${seq}/${novogen_id}_2.fq.gz" ]]; then
+        # Rename the sequence files
+        mv "${seq}/${novogen_id}_1.fq.gz" "${seq}/${id}_1.fq.gz"
+        mv "${seq}/${novogen_id}_2.fq.gz" "${seq}/${id}_2.fq.gz"
+    else
+        # Move the non-existent files to the backup directory
+        mv "${seq}/${novogen_id}_1.fq.gz" backup/
+        mv "${seq}/${novogen_id}_2.fq.gz" backup/
+    fi
+done < result/metadata.txt
+
+
+
+############################################
+### 1.2. sequencing data sequencing data ###
+############################################
+
+
+# # This code can be run in RStudio before uncommenting "#" with Ctrl + Shift + C
+# # (Optional) Download sequencing data by GSA CRA (batch) and CRR (sample) number
+# # Example downloading a single file and renaming it
+
+
+# mkdir -p seq
+# wget -c ftp://download.big.ac.cn/gsa/CRA002352/CRR117575/CRR117575_f1.fq.gz -O "${seq}"/KO1_1.fq.gz
+
+## Bulk download and rename by experimental design number
+
+# awk '{system("wget -c ftp://download.big.ac.cn/gsa/"$5"/"$6"/"$6"_f1.fq.gz -O "${seq}"/"$1"_1.fq.gz")}' \
+#<(tail -n+2 result/metadata.txt)
+
+# awk '{system("wget -c ftp://download.big.ac.cn/gsa/"$5"/"$6"/"$6"_r2.fq.gz -O "${seq}"/"$1"_2.fq.gz")}' \
+# <(tail -n+2 result/metadata.txt)
+
+# The sequencing results returned by the company, usually a sample pair in fq/fastq.gz format compressed file
+# File names must correspond to sample names: change manually if inconsistent, see "FAQ 6" for batch name changes
+
+# If the sequencing data is a .gz zip file, sometimes you need to use gunzip to decompress it, vsearch can usually read the zip file directly
+# gunzip "${seq}"/*.gz
+# zless to view compressed files by page, space to page, q to exit; head to view first 10 lines by default, -n to specify lines
+ls -sh "${seq}"
+zless "${seq}"/B1_1.fq.gz | head -n4
+
+# Each line is too long, specify to view 1-60 characters of each line
+zless "${seq}"/B1_1.fq.gz | head | cut -c 1-60
+
+# Statistical sequencing data, dependent on seqkit program
+seqkit stat "${seq}"/B1_1.fq.gz
+
+# Batch statistics for sequencing data and summary tables
+seqkit stat "${seq}"/*.fq.gz > result/seqkit.txt
+
+head result/seqkit.txt
+
+
+
+################################
+### 1.3. pipeline & database ###
+################################
+
+
+# The database must be unpacked for the first time, you can skip this section later
+
+# usearchs available 16S/18S/ITS databases: RDP, SILVA and UNITE, local file location ${db}/usearch/
+# usearch database database download page: http://www.drive5.com/usearch/manual/sintax_downloads.html
+
+
+# Decompress 16S RDP database, gunzip to unzip, seqkit stat statistics
+# Keep the original compressed file
+# gunzip -c ${db}/usearch/rdp_16s_v18.fa.gz > ${db}/usearch/rdp_16s_v18.fa
+# seqkit stat ${db}/usearch/rdp_16s_v18.fa # 21,000 sequences
+
+
+
+# Unzip the ITS UNITE database, mv rename to simplify
+#gunzip -c ${db}/usearch/utax_reference_dataset_all_29.11.2022.fasta.gz > ${db}/usearch/unite.fa
+
+# mv ${db}/usearch/utax_reference_dataset_all_29.11.2022.fasta ${db}/usearch/unite.fa
+
+seqkit stat "C:\Users\c1463797\OneDrive - Cardiff University\Cardiff University\1. PhD projects\5_Microbiota_Analysis\EasyMicrobiome\usearch\unite.fa"
+# format  type  num_seqs      sum_len  min_len  avg_len  max_len
+# FASTA   DNA    326,434  208,468,881      250    638.6   16,761
+
+
+# Greengene database for feature comments: ftp://greengenes.microbio.me/greengenes_release/gg_13_5/gg_13_8_otus.tar.gz
+# Unzip by default will delete the original file, -c specifies output to screen, > write to new file (can change name)
+# gunzip -c ${db}/gg/97_otus.fasta.gz > ${db}/gg/97_otus.fa
+# seqkit stat ${db}/gg/97_otus.fa
+
+
+
+
+
+##########################################
+##########################################
+### 2. Sequence merge and rename reads ###
+##########################################
+##########################################
+
+
+
+#########################################################
+### 2.1 Merge pair-end sequences and rename by sample ###
+#########################################################
+
+
+
+### Test. Take D172 single sample merge as an example
+# time statistics computation time, real is physical time, user is computation time, sys is hardware wait time
+time vsearch --fastq_mergepairs "${seq}"/B1_1.fq.gz \
+--reverse "${seq}"/B1_2.fq.gz \
+--fastqout temp/B1.merged.fq \
+--relabel B1.
+
+# vsearch v2.22.1_win_x86_64, 15.8GB RAM, 8 cores
+# https://github.com/torognes/vsearch
+# 
+# Merging reads 100%
+#     137074  Pairs
+#     122124  Merged (89.1%)
+#      14950  Not merged (10.9%)
+# 
+# Pairs that failed merging due to various reasons:
+#       1251  too few kmers found on same diagonal
+#         31  multiple potential alignments
+#       1045  too many differences
+#       3949  alignment score too low, or score drop too high
+#       2719  overlap too short
+#       5955  staggered read pairs
+# 
+# Statistics of all reads:
+#     224.00  Mean read length
+# 
+# Statistics of merged reads:
+#     316.36  Mean fragment length
+#      28.56  Standard deviation of fragment length
+#       0.36  Mean expected error in forward sequences
+#       0.34  Mean expected error in reverse sequences
+#       0.18  Mean expected error in merged sequences
+#       0.23  Mean observed errors in merged region of forward sequences
+#       0.18  Mean observed errors in merged region of reverse sequences
+#       0.41  Mean observed errors in merged region
+# 
+# real    0m4.747s
+# user    0m0.000s
+# sys     0m0.016s
+
+
+
+
+
+
+# According to the output, a total of 126,643 read pairs were processed, and 123,156 pairs (97.2%) were merged successfully. The remaining 2.8% of pairs were not merged due to various reasons, such as too few kmers found on the same diagonal, potential tandem repeat, or too many differences.
+
+# The merged reads have a mean fragment length of 319.88 base pairs, with a standard deviation of 20.45 base pairs. The expected error rates in the forward and reverse sequences are 0.37 and 0.32, respectively, and the expected error rate in the merged sequences is 0.20. The observed error rates in the merged regions of the forward and reverse sequences are 0.27 and 0.18, respectively, and the mean observed error rate in the merged regions is 0.45.
+
+# Overall, it appears that the --fastq_mergepairs function was able to merge the majority of the reads from your paired-end fastq files successfully, with only a small percentage of pairs failing to merge due to various factors.
+
+# head temp/D172.merged.fq
+#
+# $ head temp/D172.merged.fq
+# @D172.1
+# GAAATGCGATAAGTAATGTGAATTGCAGAATTCAGTGAATCATCGAATCTTTGAACGCAACTTGCGCTCTCTGGTATTCCGGAGAGCATGCCTGT                                                    TTGAGTATCATGAAATCTCAACCATTAGGGTTTCTTAATGGCTTGGATTTGGGCGCTGCCACTTGCCTGGCTCGCCTTAAAAGAGTTAGCGTATT                                                    AACTTGTCGATCTGGCGTAATAAGTTTCGCTGGTGTAGACTTGAGAAGTGCGCTTCTAATCGTCTTCGGACAATTCTTGAACTCTGGTCTCAAAT                                                    CAGGTAGGACTACCCGCTGAACTTAA
+# +
+# FFFFFFFFFFFFFFFFFFFFFFFFFFFFF:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,FFFFFFFFFFFJJJJJJJJ                                                    JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ                                                    JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF                                                    FFFFFFFFFFFFFFFFFFFFFFFFFF
+# @D172.2
+# GAAATGCGATACGTAATGTGAATTGCAAATTCAGTGAATCATCGAATCTTTGAACGCACATTGCGCCCTCTGGTCTTCCGGAGGGCATGCCTGTT                                                    CGAGCGTCATTACAACCCTCAGGCCCCCGGGCCTGGCGTTGGGGATCGGCGAGGCGCCCCCTGCGGGCACACGCCGTCCCCCAAATACAGTGGCG                                                    GTCCCGCCGCAGCTTCCATTGCGTAGTAGCTAACACCTCGCAACTGGAGAGCGGCGCGGCCACGCCGTAAAACACCCAACTTCTGAATGTTGACC                                                    TCGAATCAGGTAGGGATACCCGCTGAACTTAA
+# +
+# FFF:FFFFFFFFFF:FF,FFFFFF:FF:FFFF,FFFFFFFFFFFFFFFFFFFFFFFFFF,FFFFFFFFFFFFFF,FFFFFFFFFFFFFFFFFFJJ                                                    JJJJJJ;JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ;JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ                                                    JJJJJJJJJJJJJJJJJJJJJJJJ$JJ-JJJJJJFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,FFFFFFFFFFF:FFFF                                                    :FFFFFFFFF:FFFFFFFFFFF:FFFFFFFFF
+# @D172.3
+# GAAATGCGATAAGTAATGTGAATTGCAGAATTCAGTGAATCATCGAATCTTTGAACGCAACTTGCGCCCTTTGGTATTCCGAAGGGCATGCCTGT                                                    TTGAGAGTCATGAAAATCTCAATCCCTCGGGTTTTATTACCTGTTGGACTTGGATTTGGGTGTTTGCCGCGACCTGCAAAGGACGTCGGCTCGCC                                                    TTAAATGTGTTAGTGGGAAGGTGATTACCTGTCAGCCCGGCGTAATAAGTTTCGCTGGGCCTATGGGGTAGTCTTCGGCTTGCTGATAACAACCA                                                    TCTCTTTTTGTTTGACCTCAAATCAGGCAGGGCTACCCGCTGAACTTAA
+
+
+
+
+
+# batch and merge according to experimental design
+# tail -n+2 to remove table header, cut -f1 to take first column, get sample list; 18 samples x 1.5k pairs of sequences merged 8s
+# Win under copy Ctrl + C for Linux to abort, to prevent abnormal interruptions, add & turn background at the end, no display before pressing enter to continue
+
+# A part of the computer rush does not support, runtime scheduling failure, please use the for loop part
+# The for loop part is put into the background to run, before you click run, it looks like the program has finished running, but actually it is not finished, it is running.
+# Don't rush to run the next program.
+# In the previous course, you found that the results were different each time you ran the program because the for loop was not finished and only part of the data was generated, resulting in the following
+# Each sample reads number will be inconsistent every time you run it.
+
+
+# Method 1. for loop sequence processing
+time for i in `tail -n+2 result/metadata.txt|cut -f1`;do
+vsearch --fastq_mergepairs "${seq}"/${i}_1.fq.gz --reverse "${seq}"/${i}_2.fq.gz \
+--fastqout temp/${i}.merged.fq --relabel ${i}.
+done &
+
+# Some computers rush does not support it and scheduling fails at runtime, please use the for loop part
+# method 2. rush parallel processing, task number jobs(j),2 can be accelerated by 1 times 4s; suggest setting 2-4
+# time tail -n+2 result/metadata.txt | cut -f 1 | \
+# rush -j 3 "vsearch --fastq_mergepairs "${seq}"/{}_1.fq.gz --reverse "${seq}"/{}_2.fq.gz \
+#       --fastqout temp/{}.merged.fq --relabel {}."
+
+
+# Check the sample names in the first 10 lines of the last file
+head temp/`tail -n+2 result/metadata.txt | cut -f 1 | tail -n1`.merged.fq | grep ^@
+
+  ## Method 3. decompress and then double merge when compressed files are not supported
+  # # gunzip "${seq}"/*.fq.gz
+  # time tail -n+2 result/metadata.txt | cut -f 1 | \
+  # rush -j 1 "vsearch --fastq_mergepairs <(zcat "${seq}"/{}_1.fq.gz) --reverse <(zcat "${seq}"/{}_2.fq.gz) \
+  # --fastqout temp/{}.merged.fq --relabel {}."
+  #
+  # time for i in `tail -n+2 result/metadata.txt|cut -f1`;do
+  # vsearch --fastq_mergepairs <(zcat "${seq}"/${i}_1.fq.gz) --reverse <(zcat "${seq}"/${i}_2.fq.gz) \
+  # --fastqout temp/${i}.merged.fq --relabel ${i}.
+  # done &
+
+### 2.2 (Optional) Single-end file rename Single-end reads rename
+
+# Single sequence rename example
+# i=WT1
+# gunzip -c "${seq}"/${i}_1.fq.gz > "${seq}"/${i}.fq
+# usearch -fastx_relabel "${seq}"/${i}.fq -fastqout temp/${i}.merged.fq -prefix ${i}.
+#
+# batch rename, need to have single-ended fastq file and decompression (usearch does not support compressed format)
+# gunzip "${seq}"/*.gz
+# time for i in `tail -n+2 result/metadata.txt|cut -f1`;do
+# usearch -fastx_relabel "${seq}"/${i}.fq -fastqout temp/${i}.merged.fq -prefix ${i}.
+# done &
+# # vsearch big data method refer to "FAQ 2"
+
+
+
+####################################################################
+### 2.3 Integration of renamed sequences integrate renamed reads ###
+####################################################################
+
+
+# integrate all samples into the same file
+cat temp/*.merged.fq > temp/all.fq
+
+#Check file size 223M, results vary slightly by software version
+ls -lsh temp/all.fq
+# 4.2G -rw-r--r-- 1 ID+c1463797 4096 4.3G Jul 20 23:27 temp/all.fq
+
+
+# Check the sequence name, "." before the sample name, sample names are never allowed to have a dot (".")
+# Sample names with a dot (.) One of the significant features of the generated feature table is that the generated feature table will be very large, and there are many columns in the feature table, resulting in insufficient memory for later analysis.
+# You should look at the feature table before the analysis to see if there are any problems, and go back and check if you encounter memory shortage problems.
+head -n 10 temp/all.fq | cut -c1-60
+# @A1.1
+# ATATCAATAAGCGGAGGATGAGTGTTAGCAGTGCATCGATGAAGAACGCAGCAGCAGTGC
+# +
+# FFFFFFFFFFFFFFFFFFFFFFFFFFJJJJJJJJJJJJJJJJJ;JJJJJJF:FFF:FFFF
+# @A1.2
+# GAAATGCGATACGTAATATGAATTGCAGATATTCGTGAATCATCGAATCTTTGAACGCAC
+# +
+# FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+# @A1.3
+# ATATCAATAAGCGGAGGACGAAACAGCCGGCCTGGCATCGATGAAGAACGCAGAATATCA
+
+# grep  -e "GCATCGATGAAGAACGCAGC" -e "TCCTCCGCTTATTGATATGC" temp/all.fq
+
+
+
+#########################################
+#########################################
+### 3. cut primers and quality filter ###
+#########################################
+#########################################
+
+## Left end 10bp tag + 19bp upstream primer V5 for a total of 29, right end V7 for 18bp downstream primer
+# Cut barcode 10bp + V5 19bp in left and V7 18bp in right
+# Be sure to clarify the experimental design and primer length, primers have been removed can fill in 0, 270,000 sequences 14s
+
+
+
+# I removed the --fastq_maxee_rate 0.01 option to not filter as the seq reads already filtered by novogene.
+
+# modified
+time vsearch --fastx_filter temp/all.fq \
+--fastaout temp/filtered.fa && \
+grep -e "GCATCGATGAAGAACGCAGC" -e "TCCTCCGCTTATTGATATGC" temp/filtered.fa > temp/not_filtered.fa
+# vsearch v2.22.1_win_x86_64, 15.8GB RAM, 8 cores
+# https://github.com/torognes/vsearch
+# 
+# Reading input file 100%
+# 6606571 sequences kept (of which 0 truncated), 0 sequences discarded.
+# 
+# real    3m56.285s
+# user    0m0.000s
+# sys     0m0.047s
+
+
+
+# original
+# time vsearch --fastx_filter temp/all.fq \
+# --fastq_maxee_rate 0.01 \
+# --fastaout temp/filtered.fa && \
+# grep -e "GCATCGATGAAGAACGCAGC" -e "TCCTCCGCTTATTGATATGC" temp/filtered.fa > temp/not_filtered.fa
+
+# vsearch v2.22.1_win_x86_64, 15.8GB RAM, 8 cores
+# https://github.com/torognes/vsearch
+#
+# Reading input file 100%
+# 1807470 sequences kept (of which 0 truncated), 158114 sequences discarded.
+#
+# real    0m31.219s
+# user    0m0.000s
+# sys     0m0.000s
+
+
+
+
+
+# # before checking the bp of primers used by Novogene is 21 bp for each
+# time vsearch --fastx_filter temp/all.fq \
+# --fastq_stripleft 21 --fastq_stripright 21 \
+# --fastq_maxee_rate 0.01 \
+# --fastaout temp/filtered.fa
+
+# vsearch v2.22.1_win_x86_64, 15.8GB RAM, 8 cores
+# https://github.com/torognes/vsearch
+#
+# Reading input file 100%
+# 6570782 sequences kept (of which 6570782 truncated), 35789 sequences discarded.
+#
+# real    6m20.540s
+# user    0m0.015s
+# sys     0m0.108s
+
+
+# View the file to understand the fa file format
+head temp/filtered.fa
+
+
+
+
+########################################################################
+########################################################################
+### 4. de-redundancy picking OTU/ASV Dereplicate and cluster/denoise ###
+########################################################################
+########################################################################
+
+
+
+################################
+### 4.1 Sequence Dereplicate ###
+################################
+
+
+## add miniuniqusize to a minimum of 8 or 1/1M to remove low-abundance noise and increase computational speed
+# -sizeout output abundance, --relabel must be prefixed with sequence to be more standardized, 1s
+vsearch --derep_fulllength temp/filtered.fa \
+--minuniquesize 10 --sizeout --relabel Uni_ \
+--output temp/uniques.fa
+# vsearch v2.22.1_win_x86_64, 15.8GB RAM, 8 cores
+# https://github.com/torognes/vsearch
+# 
+# Dereplicating file temp/filtered.fa 100%
+# 2155471429 nt in 6606571 seqs, min 224, max 438, avg 326
+# Sorting 100%
+# 431667 unique sequences, avg cluster 15.3, median 1, max 405489
+# Writing FASTA output file 100%
+# 16334 uniques written, 415333 clusters discarded (96.2%)
+
+
+
+#High-abundance non-redundant sequences are very small (500K~5M is more suitable), with size and frequency before the name
+ls -lsh temp/uniques.fa
+# 5.7M -rw-r--r-- 1 ID+c1463797 4096 5.7M Jul 20 23:37 temp/uniques.fa
+
+
+
+# Uni_1;size=417418 - the name of the sequence before redundancy Uni_1; the sequence appears 417418 times in all samples sequencing data
+head -n 2 temp/uniques.fa
+
+# >Uni_1;size=265840
+# ATATCAATAAGCGGAGGACGTACGTCAAGTGCATCGATGAAGAACGCA
+
+
+
+
+
+###########################################################
+### 4.2 Clustering OTU/denoising ASV Cluster or denoise ###
+###########################################################
+
+### There are two methods: unoise3 denoise is recommended to obtain single-base precision ASV, alternative traditional 97% clustering OTU (genus level precision)
+#usearch both feature selection methods come with de novo de-chimerization
+#-minsize secondary filtering to control the number of OTUs/ASVs to 1-5k, facilitating downstream statistical analysis
+
+
+
+# METHOD 1. 97% clustering OTU, suitable for big data/ASV pattern is not obvious/reviewer requirements
+#results took 1s, generated 508 OTUs, removed 126 chimeras
+# usearch -cluster_otus temp/uniques.fa -minsize 10 \
+# -otus temp/otus.fa \
+# -relabel OTU_
+
+
+
+# METHOD 2. ASV denoise Denoise: predict biological sequences and filter chimeras
+usearch -unoise3 temp/uniques.fa -minsize 8 \
+-zotus temp/zotus.fa
+# usearch v11.0.667_win32, 2.0Gb RAM (17.0Gb total), 8 cores
+# (C) Copyright 2013-18 Robert C. Edgar, all rights reserved.
+# https://drive5.com/usearch
+# 
+# License: aseeriaa@cardiff.ac.uk
+# 
+# 00:00 19Mb    100.0% Reading temp/uniques.fa
+# 00:01 60Mb    100.0% 3894 amplicons, 751929 bad (size >= 10)
+# 04:19 62Mb    100.0% 2297 good, 1598 chimeras
+# 04:19 62Mb    100.0% Writing zotus
+
+
+
+#Modify the sequence name: Zotu for to ASV for easy identification
+sed 's/Zotu/ASV_/g' temp/zotus.fa > temp/otus.fa
+
+head -n 2 temp/otus.fa
+
+# >ASV_1
+# ATCCCGTGAACCATCGAGTCTTTGAACGCAAGTTGCGCCCGAAGCCATTTGGCCGAGGGCACGTCTGCCTGGGCGTCACG
+
+
+## Method 3. See "FAQ 3" for alternative vsearch methods when the data is too large to use usearch
+
+
+
+
+#############################################
+### 4.3 Reference-based chimera detection ###
+#############################################
+
+# Not recommended, easy to cause false negatives, because the reference database has no abundance information
+# # And de novo requires parental abundance of 16 times more than the chimera to prevent false negatives
+# Because known sequences will not be removed, the larger the database selection the more reasonable, the lowest false negative rate
+mkdir -p result/raw
+
+# Method 1. vsearch+rdp de-chimerization (fast but prone to false negatives)
+# You can download silva and unzip it (replace rdp_16s_v18.fa with silva_16s_v123.fa), extremely slow but theoretically better
+vsearch --uchime_ref temp/otus.fa \
+-db "C:\Users\c1463797\OneDrive - Cardiff University\Cardiff University\1. PhD projects\5_Microbiota_Analysis\EasyMicrobiome\usearch\unite.fa" \
+--nonchimeras result/raw/otus.fa
+
+# vsearch v2.22.1_win_x86_64, 15.8GB RAM, 8 cores
+# https://github.com/torognes/vsearch
+
+# Reading file C:\Users\c1463797\OneDrive - Cardiff University\Cardiff University\1. PhD projects\5_Microbiota_Analysis\EasyMicrobiome\usearch\unite.fa
+# 100%
+# 208468881 nt in 326434 seqs, min 250, max 16761, avg 639
+# Masking 100%
+# Counting k-mers 100%
+# Creating k-mer index 100%
+# Detecting chimeras 100%
+# Found 260 (11.3%) chimeras, 1943 (84.6%) non-chimeras,
+# and 94 (4.1%) borderline sequences in 2297 unique sequences.
+# Taking abundance information into account, this corresponds to
+# 260 (11.3%) chimeras, 1943 (84.6%) non-chimeras,
+# and 94 (4.1%) borderline sequences in 2297 total sequences.
+
+
+sed -i 's/\r//g' result/raw/otus.fa
+
+
+
+# method 2. no nesting
+# cp -f temp/otus.fa result/raw/otus.fa
+
+
+
+##########################################################################
+##########################################################################
+### 5. Feature table create and filter ###
+##########################################################################
+##########################################################################
+
+# OTU and ASV are collectively referred to as Feature, and the difference between them is.
+# OTU usually selects representative sequences with the highest abundance or center before clustering by 97%.
+
+# ASV is based on sequence denoising (excluding or correcting erroneous sequences and selecting plausible sequences with higher abundance) as representative sequences
+
+
+#####################################
+### 5.1 Generating feature tables ###
+#####################################
+
+# method 1. usearch generates feature tables, fast for small samples (<30); but limited and inefficient for large samples with multiple threads, 83.2%, 4 cores 17s
+# time usearch -otutab temp/filtered.fa \
+# -otus result/raw/otus.fa \
+# -threads 4 \
+# -otutabout result/raw/otutab.txt
+
+
+
+# Method 2. vsearch to generate feature table
+
+time vsearch --usearch_global temp/filtered.fa \
+--db result/raw/otus.fa \
+--id 0.97 --threads 10 \
+--otutabout result/raw/otutab.txt
+# vsearch v2.22.1_win_x86_64, 15.8GB RAM, 8 cores
+# https://github.com/torognes/vsearch
+# 
+# Reading file result/raw/otus.fa 100%
+# 657117 nt in 1943 seqs, min 227, max 438, avg 338
+# Masking 100%
+# Counting k-mers 100%
+# Creating k-mer index 100%
+# Searching 100%
+# Matching unique query sequences: 6250707 of 6606571 (94.61%)
+# Writing OTU table (classic) 100%
+# 
+# real    25m34.684s
+# user    0m0.484s
+# sys     0m0.562s
+
+
+
+
+# vsearch result for windows users to remove line breaks ^M corrected to standard Linux format
+sed -i 's/\r//' result/raw/otutab.txt
+head -n6 result/raw/otutab.txt | cut -f 1-6 |cat -A
+
+# csvtk statistics table columnsr
+# here must look at the number of columns, is not equal to the number of your samples; if not equal, usually there is a problem with the naming of samples, see the above explanation
+csvtk -t stat result/raw/otutab.txt
+# file                    num_cols   num_rows
+# result/raw/otutab.txt         61      1,940
+
+
+
+
+
+
+
+################################################################################
+### 5.2 Species annotation and/or removal of plastids and non-Bacteria/Fungi ###
+################################################################################
+
+### Species annotation - remove plastid and non-Bacteria/archaea and count proportions (optional)
+# RDP species annotation (rdp_16s_v18) is faster, but lacks complete eukaryotic source data, may be incomplete, takes 15s;
+# SILVA database (silva_16s_v123.fa) better annotation of eukaryotic and plastid sequences, very slow from 3h
+
+
+
+
+# Confidence threshold usually 0.6/0.8, vserch lowest 0.1/usearch optional 0 output most similar species annotation used to observe potential classification
+vsearch --sintax result/raw/otus.fa \
+--db "C:\Users\c1463797\OneDrive - Cardiff University\Cardiff University\1. PhD projects\5_Microbiota_Analysis\EasyMicrobiome\usearch\unite.fa" \
+--sintax_cutoff 0.8 \
+--tabbedout result/raw/otus.sintax.txt
+
+# vsearch v2.22.1_win_x86_64, 15.8GB RAM, 8 cores
+# https://github.com/torognes/vsearch
+
+# C:\Users\c1463797\OneDrive - Cardiff University\Cardiff University\1. PhD projects\5_Microbiota_Analysis\EasyMicrobiome\usearch\unite.fa 100%
+
+# 208468881 nt in 326434 seqs, min 250, max 16761, avg 639
+# Counting k-mers 100%
+# Creating k-mer index 100%
+# Classifying sequences 100%
+# Classified 1823 of 1943 sequences (93.82%)
+
+
+head result/raw/otus.sintax.txt | cat -A
+sed -i 's/\r//' result/raw/otus.sintax.txt
+wc -l result/raw/otus.sintax.txt
+# 1943 result/raw/otus.sintax.txt
+
+
+
+
+
+# Method 1. raw feature table rows
+
+
+# R script selects bacterial archaea (eukaryotes), removes chloroplasts, mitochondria and counts proportions; outputs filtered and sorted OTU table
+
+# Input is OTU table result/raw/otutab.txt and species comment result/raw/otus.sintax
+
+# output as filtered and sorted feature table result/otutab.txt and
+
+# Statistical contamination percentage file result/raw/otutab_nonFungal.txt and filter details otus.sintax.discard
+
+# Fungal ITS data, please use otutab_filter_nonFungi.R script instead to filter only fungi
+
+
+
+
+
+# R script ${db}/script/otutab_filter_nonFungi.R -h # Show parameter descriptions
+Rscript "C:\Users\c1463797\OneDrive - Cardiff University\Cardiff University\1. PhD projects\5_Microbiota_Analysis\EasyMicrobiome\script\otutab_filter_nonFungi.R" \
+--input result/raw/otutab.txt \
+--taxonomy result/raw/otus.sintax.txt \
+--output result/otutab.txt \
+--stat result/raw/otutab_nonFungi.stat \
+--discard result/raw/otus.sintax.discard
+# [1] "Input feature table is result/raw/otutab.txt"
+# [1] "Input sintax taxonomy table is result/raw/otus.sintax.txt"
+# [1] "Summary of samples size in final feature table: "
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max.
+#    1628   37396   72264   68938   99509  137773
+# [1] "Onput feature table is result/otutab.txt"
+# [1] "Detail and statistics in result/raw/otutab_nonFungal.txt"
+
+
+
+# number of rows in feature table before filtering
+wc -l result/otutab.txt
+# 927 result/otutab.txt
+
+
+# Filter feature table corresponding sequences
+cut -f 1 result/otutab.txt | tail -n+2 > result/otutab.id
+
+
+
+# Extract sequences from a FASTA file based on their labels
+usearch -fastx_getseqs result/raw/otus.fa \
+-labels result/otutab.id -fastaout result/otus.fa
+
+# usearch v11.0.667_win32, 2.0Gb RAM (17.0Gb total), 8 cores
+# (C) Copyright 2013-18 Robert C. Edgar, all rights reserved.
+# https://drive5.com/usearch
+#
+# License: aseeriaa@cardiff.ac.uk
+#
+# 00:00 5.7Mb  Reading result/otutab.id...done.
+# 00:00 6.5Mb   100.0% Searching, 1927 found
+
+
+
+# filter feature table corresponding to sequence comments
+awk 'NR==FNR{a[$1]=$0}NR>FNR{print a[$1]}' \
+result/raw/otus.sintax.txt result/otutab.id \
+> result/otus.sintax
+
+
+
+# Method 2. You can not filter if you think the filter is not reasonable
+# cp result/raw/otu* result/
+
+
+# Optional statistics method: OTU table simple statistics Summary
+"D:\Download\usearch" -otutab_stats result/otutab.txt \
+-output result/otutab.stat
+# usearch v10.0.240_win32, 2.0Gb RAM (17.0Gb total), 8 cores
+# (C) Copyright 2013-17 Robert C. Edgar, all rights reserved.
+# http://drive5.com/usearch
+#
+# License: personal use, non-transferrable
+#
+# 00:00 7.4Mb   100.0% Reading result/otutab.txt
+
+
+
+cat result/otutab.stat
+#    4136258  Reads (4.1M)
+#         60  Samples
+#        926  OTUs
+# 
+#      55560  Counts
+#      44373  Count  =0  (79.9%)
+#       2962  Count  =1  (5.3%)
+#       3845  Count >=10 (6.9%)
+# 
+#         10  OTUs found in all samples (1.1%)
+#         27  OTUs found in 90% of samples (2.9%)
+#         89  OTUs found in 50% of samples (9.6%)
+# 
+# Sample sizes: min 1628, lo 38034, med 72302, mean 68937.6, hi 104733, max 137773
+
+
+
+Below is an R script in case of the above otutab.stat command did not work
+
+# setwd("C:/Users/c1463797/OneDrive - Cardiff University/Cardiff University/1. PhD projects/5_Microbiota_Analysis/5_1_AlgiPharma/2_before")
+#
+#
+# # load the OTU table into a data frame
+# otu_table <- read.table("result/otutab.txt", header = TRUE, row.names = 1)
+#
+# # calculate basic summary statistics
+# summary(otu_table)
+#
+# # calculate the total number of reads
+# total_reads <- sum(otu_table)
+# # 1214463
+#
+# # calculate the total number of OTUs
+# total_otus <- nrow(otu_table)
+# # 1959
+#
+# # calculate the total number of samples
+# total_samples <- ncol(otu_table)
+# # 60
+#
+# # calculate the mean read count per sample
+# mean_reads_per_sample <- mean(colSums(otu_table))
+# # 20241.05
+#
+#
+# # calculate the median read count per sample
+# median_reads_per_sample <- median(colSums(otu_table))
+# # 17335.5
+#
+# # calculate the mean read count per OTU
+# mean_reads_per_otu <- mean(rowSums(otu_table))
+# # 619.9403
+#
+# # If you want to perform normalization by equal sampling, you should use mean_reads_per_sample to calculate the subsampling depth for each sample.
+# #
+# # The reason for this is that subsampling by mean_reads_per_otu would result in samples with very low sequencing depth having a disproportionately larger impact on the results, as they would have fewer OTUs to subsample. On the other hand, subsampling by mean_reads_per_sample ensures that each sample has the same depth, regardless of the number of OTUs present. This can help to reduce the impact of sequencing depth on downstream analyses and facilitate meaningful comparisons between samples.
+#
+#
+#
+# # You can find the sample with the least reads by using the which.min function on the colSums of the OTU table. Here's an example code:
+#
+# # load the OTU table into a data frame
+# otu_table <- read.table("result/otutab.txt", header = TRUE, row.names = 1)
+#
+# # find the sample with the least reads
+# least_reads_sample <- colnames(otu_table)[which.min(colSums(otu_table))]
+# # "A27"
+#
+# # print the sample name and its total reads
+# cat("Sample with the least reads:", least_reads_sample, "\n")
+# # Sample with the least reads: A27
+#
+#
+# cat("Total reads:", colSums(otu_table)[least_reads_sample], "\n")
+# # Total reads: 3058
+#
+#
+# ### Note the minimum, quantile, or look at the sample detail data amount in result/raw/otutab_nonBac.stat for resampling
+#
+#
+#
+# # Create a vector of sample names
+# sample_names <- colnames(otu_table)
+#
+# # Create a vector of library sizes
+# library_sizes <- colSums(otu_table) %>% sort()
+# # A27          A3         A23         A21         A34          A7          A1
+# # 3058        4672        8871       10060       10550       10609       10756
+# # A28         A47          A9          A4         A30         A25         A45
+# # 11749       13327       13585       14526       14528       15310       15903
+# # A13         A24         A35         A29         A26         A46         A12
+# # 16046       16892       18341       18733       18875       19370       19707
+# # A43         A48          A6         A17         A32         A15         A22
+# # 19853       20218       20532       20551       21467       21544       22266
+# # A8         A44         A53         A10         A31         A20         A19
+# # 22274       22978       23442       23506       23693       23788       24311
+# # A2         A11         A38         A55         A14         A56         A42
+# # 24490       25042       25500       25564       25914       26462       26559
+# # A39         A40         A37         A52         A57         A18         A49
+# # 26605       26815       26903       27050       27295       27809       28198
+# # A51         A36         A41         A50          A5         A16         A54
+# # 29736       30191       33398       34562       34788       43346       46162
+# # A33       ddH2O         A58 FungalMock2
+# # 48562       57465       65534       70897
+#
+# # Plot the library sizes
+# barplot(library_sizes, names.arg = sample_names, xlab = "Sample", ylab = "Library Size", main = "Library Size per Sample")
+
+
+
+
+# If you want to perform normalization by equal sampling, you should use mean_reads_per_sample to calculate the subsampling depth for each sample.
+#
+# The reason for this is that subsampling by mean_reads_per_otu would result in samples with very low sequencing depth having a disproportionately larger impact on the results, as they would have fewer OTUs to subsample. On the other hand, subsampling by mean_reads_per_sample ensures that each sample has the same depth, regardless of the number of OTUs present. This can help to reduce the impact of sequencing depth on downstream analyses and facilitate meaningful comparisons between samples.
+
+
+### Note the minimum, quantile, or look at the sample detail data amount in result/raw/otutab_nonBac.stat for resampling
+
+
+
+
+
+###########################################
+### 5.3 Normalization by equal sampling ###
+###########################################
+
+
+## Normlize by subsample
+
+### Use vegan package for equal resampling, input reads count Feature table result/otutab.txt
+
+# Can specify input file, sampling size and random number, output sampling level table result/otutab_rare.txt and diversity alpha/vegan.txt
+mkdir -p result/alpha
+
+# without subsampling:
+Rscript "${db}"/script/otutab_rare.R \
+--input result/otutab.txt \
+--depth 0 --seed 1 \
+--normalize result/otutab_rare.txt \
+--output result/alpha/vegan.txt
+#         B21         B36    Pa_Blank          B5         B55          B2
+#        1628        1652        3395        4558        9272       12725
+#          B4          B8          B7         B24         B23         B15
+#       15278       16856       16863       18497       18633       20670
+#         B29         B56         B48         B12         B25         B27
+#       28261       34596       35483       38034       38263       39174
+#          B6         B45         B44         B53         B39         B19
+#       40762       49331       49388       49771       53089       56800
+#         B43         B54         B10         B30         B42         B17
+#       58343       60556       66403       69981       71540       72226
+#         B47         B49         B37         B20          B1         B35
+#       72302       77618       81060       81550       81778       86391
+#         B11         B13          B3          B9         B50         B58
+#       89134       90154       90935       94112       94314       94632
+#         B33         B52         B40         B31         B16         B28
+#       94957       95826       97768      104733      109217      109670
+# FungalMock1         B57         B26         B18         B51         B14
+#      109680      111975      112893      114260      116312      116681
+#         B46         B38         B34         B32         B41         B22
+#      116797      118756      124143      127979      130830      137773
+# [1] "Rarefaction depth 1628. If depth set 0 will using sample minimum size 1628"
+# [1] "Random sample number: 1"
+# [1] "The discard samples: "
+# Loading required package: permute
+# Loading required package: lattice
+# This is vegan 2.6-4
+# [1] "Calculate six alpha diversities by estimateR and diversity"
+#    richness    chao1      ACE  shannon   simpson invsimpson
+# B1       49 76.08333 87.82345 1.170807 0.4784273   1.917278
+# [1] "Name of rarefaction file result/otutab_rare.txt"
+# [1] "Output alpha diversity filename result/alpha/vegan.txt"
+# [1] "The discard samples file result/otutab_rare.txt.discard"
+
+
+
+# Subsampling to 12000
+Rscript "${db}"/script/otutab_rare.R \
+--input result/otutab.txt \
+--depth 12000 --seed 1 \
+--normalize result/otutab_rare.txt \
+--output result/alpha/vegan_rare.txt
+#         B21         B36    Pa_Blank          B5         B55          B2
+#        1628        1652        3395        4558        9272       12725
+#          B4          B8          B7         B24         B23         B15
+#       15278       16856       16863       18497       18633       20670
+#         B29         B56         B48         B12         B25         B27
+#       28261       34596       35483       38034       38263       39174
+#          B6         B45         B44         B53         B39         B19
+#       40762       49331       49388       49771       53089       56800
+#         B43         B54         B10         B30         B42         B17
+#       58343       60556       66403       69981       71540       72226
+#         B47         B49         B37         B20          B1         B35
+#       72302       77618       81060       81550       81778       86391
+#         B11         B13          B3          B9         B50         B58
+#       89134       90154       90935       94112       94314       94632
+#         B33         B52         B40         B31         B16         B28
+#       94957       95826       97768      104733      109217      109670
+# FungalMock1         B57         B26         B18         B51         B14
+#      109680      111975      112893      114260      116312      116681
+#         B46         B38         B34         B32         B41         B22
+#      116797      118756      124143      127979      130830      137773
+# [1] "Rarefaction depth 10000. If depth set 0 will using sample minimum size 10000"
+# [1] "Random sample number: 1"
+# Warning message:
+# In vegan::rrarefy(t(species), opts$depth) :
+#   some row sums < 'sample' and are not rarefied
+# [1] "The discard samples: B21"      "The discard samples: B36"
+# [3] "The discard samples: B5"       "The discard samples: B55"
+# [5] "The discard samples: Pa_Blank"
+# Loading required package: permute
+# Loading required package: lattice
+# This is vegan 2.6-4
+# [1] "Calculate six alpha diversities by estimateR and diversity"
+#    richness    chao1      ACE  shannon   simpson invsimpson
+# B1       97 121.4737 129.7616 1.150272 0.4517124    1.82386
+# [1] "Name of rarefaction file result/otutab_rare.txt"
+# [1] "Output alpha diversity filename result/alpha/vegan_rare.txt"
+# [1] "The discard samples file result/otutab_rare.txt.discard"
+
+
+
+!!!!! I manually removed FungalMock1  from the "otutab_rare.txt" and "vegan_rare.txt" file to exlude it from the downstream analysis ####
+
+
+
+
+
+"D:\Download\usearch" -otutab_stats result/otutab_rare.txt \
+-output result/otutab_rare.stat
+
+
+cat result/otutab_rare.stat
+#     540000  Reads (540.0k)
+#         54  Samples
+#        926  OTUs
+# 
+#      50004  Counts
+#      44035  Count  =0  (88.1%)
+#       1992  Count  =1  (4.0%)
+#       1844  Count >=10 (3.7%)
+# 
+#          3  OTUs found in all samples (0.3%)
+#          9  OTUs found in 90% of samples (1.0%)
+#         45  OTUs found in 50% of samples (4.9%)
+# 
+# Sample sizes: min 10000, lo 10000, med 10000, mean 10000.0, hi 10000, max 10000
+
+
+
+
+# If the previous command works, use R script here:
+# "C:\OneDrive - Cardiff University\Cardiff University\1. PhD projects\5. Microbiota Analysis\EasyMicrobiome\script\otutab_rare.R"
+
+
+# The output of the cat result/otutab_rare.stat command provides a summary of the statistics obtained from the usearch -otutab_stats command applied to the result/otutab_rare.txt file. The analysis included 704,000 reads from 55 samples, resulting in the identification of 1,161 OTUs. The total count of all OTUs was 63,855, with the majority (89.1%) having a count of 0. A smaller proportion of OTUs had a count of 1 (3.6%) or a count of 10 or more (3.3%). The analysis revealed that 3 OTUs were present in all samples (0.3% of all OTUs), while 9 OTUs were found in 90% of the samples (0.8% of all OTUs) and 49 OTUs were found in 50% of the samples (4.2% of all OTUs). The sample sizes were consistent, with a minimum, lower quartile, median, mean, upper quartile, and maximum of 12,800 reads per sample.
+
+
+
+
+
+##########################
+##########################
+### 6. alpha diversity ###
+##########################
+##########################
+
+
+###!!!!!! I ended up with 55 samples before subsampling to 12500. I deleted FungalMock from otutab_rare.txt to exclude it from the downstrean analysis.
+
+
+
+
+################################################################
+### 6.1. calculate alpha diversity calculate alpha diversity ###
+################################################################
+
+
+### Use USEARCH to calculate 14 alpha diversity indices (Chao1 is wrong, don't use it), details in http://www.drive5.com/usearch/manual/alpha_metrics.html
+
+"D:\Download\usearch" -alpha_div result/otutab_rare.txt \
+-output result/alpha/alpha.txt
+
+# change sample_id manulaly into id in notepad++
+
+
+
+head -n2 result/alpha/alpha.txt
+
+
+
+
+
+#########################################################################
+### 6.2. calculate dilution richness / calculate rarefaction richness ###
+#########################################################################
+
+# Dilution curve: take the number of OTUs in the sequence from 1%-100%, with no put-back sampling each time
+# Rarefaction from 1%, 2% ... 100% in richness (observed OTUs)-method
+# https://drive5.com/usearch/manual/cmd_otutab_subsample.html
+
+"D:\Download\usearch" -alpha_div_rare result/otutab_rare.txt \
+-output result/alpha/alpha_rare.txt \
+-method fast  # any method does not matter (https://drive5.com/usearch/manual10/cmd_otutab_subsample.html)
+
+
+# Preview results
+head -n2 result/alpha/alpha_rare.txt
+
+
+
+# Handle non-numeric "-" for low sample sequencing volume, see FAQ 8 for details
+sed -i "s/-/\t0.0/g" result/alpha/alpha_rare.txt
+
+
+
+
+
+
+################################
+### 6.3. Filter by abundance ###
+################################
+
+### Calculate the mean value of each feature, have the group and then find the group mean value, need to modify the group column name according to the experimental design metadata.txt
+
+# Input file is feautre table result/otutab.txt, experimental design metadata.txt
+
+# output is the mean value of the feature table by group - an experiment may have multiple groupings
+
+# -h show script help (parameter description)
+
+# Rscript "${db}"/script/otu_mean.R -h
+
+
+# scale is standardized or not, zoom is standardized sum, all outputs all sample means, type calculates type mean or sum
+Rscript "${db}"/script/otu_mean.R --input result/otutab_rare.txt \
+--metadata result/metadata_subsampling.txt \
+--group pa_or_bcc --thre 0 \
+--scale FALSE --zoom 100 --all FALSE --type mean \
+--output result/otutab_rare_mean.txt
+# [1] "Feature table: result/otutab_rare.txt"
+# [1] "Metadata: result/metadata.txt"
+# [1] "Group name: pa_or_bcc"
+# [1] "Abundance threshold: 0"
+# [1] "Calculate type: mean"
+# [1] "Output filename: result/otutab_rare_mean.txt"
+
+# The result is all and the mean value of each group
+head -n3 result/otutab_rare_mean.txt
+# OTUID   BCC     Pa
+# ASV_2   816.8333        655.5000
+# ASV_3   741.2500        617.7143
+
+
+# In case of, run usiing the R script here:
+# "E:\OneDrive - Cardiff University\Cardiff University\1. PhD projects\5. Microbiota Analysis\EasyMicrobiome\script\otu_mean.R"
+
+
+
+# If filtering by mean abundance > 0.1%, choose 0.5 or 0.05 to get the OTU combination for each group
+
+awk 'BEGIN{OFS=FS="\t"}{if(FNR==1) {for(i=2;i<=NF;i++) a[i]=$i; print "OTU", "Group";} \
+        else {for(i=2;i<=NF;i++) if($i>0.1) print $1, a[i];}}' \
+result/otutab_rare_mean.txt > result/alpha/otu_rare_group_exist.txt
+
+
+
+head result/alpha/otu_rare_group_exist.txt
+# OTU     Group
+# ASV_2   BCC
+# ASV_2   Pa
+# ASV_3   BCC
+# ASV_3   Pa
+# ASV_7   BCC
+# ASV_7   Pa
+# ASV_5   BCC
+# ASV_5   Pa
+# ASV_4   BCC
+
+
+cut -f 2 result/alpha/otu_rare_group_exist.txt | sort | uniq -c
+    # 298 BCC
+    #   1 Group
+    # 708 Pa
+
+
+# Try: how many OTUs/ASVs are in each group at different abundances
+# Can be plotted and displayed in http://ehbio.com/test/venn/ with Venn or network plots common and unique to each group
+# Venn, upSetView and Sanky can also be plotted at http://www.ehbio.com/ImageGP
+
+
+
+
+########################################
+########################################
+### 7. Beta diversity  ###
+########################################
+########################################
+
+
+# Results have multiple files, need directory
+mkdir -p result/beta/
+
+# To generate a distance matrix file for these OTUs, you can use the usearch -calc_distmx command, which calculates a pairwise distance matrix for a set of sequences.
+usearch -calc_distmx result/otus.fa -tabbedout result/otus_distmx.txt
+
+
+# Build evolutionary tree based on OTU
+usearch -cluster_aggd result/otus_distmx.txt -treeout result/beta/otus.tree -clusterout clusters.txt \
+  -id 0.80 -linkage min
+
+
+
+# Generate 5 distance matrices: bray_curtis, euclidean, jaccard, manhatten, unifrac
+
+usearch -beta_div result/otutab_rare.txt -tree result/beta/otus.tree \
+-filename_prefix result/beta/
+# usearch v11.0.667_win32, 2.0Gb RAM (17.0Gb total), 8 cores
+# ---Fatal error---
+# OTU table too big for 32-bit version
+
+
+# Instead, I used version 10 for this command
+"D:\Download\usearch" -beta_div result/otutab_rare.txt -tree result/beta/otus.tree \
+-filename_prefix result/beta/
+# usearch v10.0.240_win32, 2.0Gb RAM (17.0Gb total), 8 cores
+# (C) Copyright 2013-17 Robert C. Edgar, all rights reserved.
+# http://drive5.com/usearch
+# 
+# License: personal use, non-transferrable
+# 
+# 00:00 7.4Mb   100.0% Reading result/otutab_rare.txt
+# 00:01 7.6Mb   100.0% bray_curtis
+# 00:01 7.6Mb   100.0% Building tree
+# 00:01 7.6Mb   100.0% bray_curtis_binary
+# 00:01 7.6Mb   100.0% Building tree
+# 00:01 7.6Mb   100.0% euclidean
+# 00:01 7.6Mb   100.0% Building tree
+# 00:01 7.6Mb   100.0% jaccard
+# 00:01 7.6Mb   100.0% Building tree
+# 00:01 7.6Mb   100.0% jaccard_binary
+# 00:01 7.6Mb   100.0% Building tree
+# 00:01 7.6Mb   100.0% manhatten
+# 00:01 7.6Mb   100.0% Building tree
+# 00:01 7.7Mb   100.0% unifrac
+# 00:01 7.7Mb   100.0% Building tree
+# 00:02 7.7Mb   100.0% unifrac_binary
+# 00:02 7.7Mb   100.0% Building tree
+
+
+
+# AA - Identify and filter cross-talk in an OTU table using the UNCROSS2 algorithm.
+# https://www.drive5.com/usearch/manual/cmd_otutab_xtalk.html
+# "D:\Download\usearch" -otutab_xtalk result/otutab_rare.txt -report result/beta/xtalk_report.txt \
+#   -htmlout result/beta/xtalk.html -otutabout result/beta/otutabx.txt
+
+
+
+#####################################################
+#####################################################
+### 8. Species annotations classification summary ###
+#####################################################
+#####################################################
+
+
+
+
+
+# OTU corresponds to 2 columns of species annotations format: remove confidence values in sintax, keep only species annotations, replace :with _, remove quotation marks
+cut -f 1,4 result/otus.sintax \
+sed 's/\td/\tk/;s/:/__/g;s/,/;/g;s/"//g' \
+> result/taxonomy2.txt
+
+head -n3 result/taxonomy2.txt
+# ASV_2   d:Fungi,p:Ascomycota,c:Saccharomycetes,o:Saccharomycetales,f:Saccharomycetales_fam_Incertae_sedis,g:Candida,s:Candida_albicans
+# ASV_3   d:Fungi,p:Ascomycota,c:Saccharomycetes,o:Saccharomycetales,f:Saccharomycetales_fam_Incertae_sedis,g:Candida,s:Candida_dubliniensis
+# ASV_5   d:Fungi,p:Ascomycota,c:Saccharomycetes,o:Saccharomycetales,f:Saccharomycetales_fam_Incertae_sedis,g:Candida,s:Candida_albicans
+
+
+
+# I came across errors with this command. Instead I replaced the blanks with Unassigned in Excel!
+
+# OTU corresponding species 8-column format: note that comments are non-tidy
+# Generate species table OTU/ASV with blanks filled in as Unassigned
+
+# awk 'BEGIN{OFS=FS="\t"}{delete a; a["d"]="Unassigned"; a["p"]="Unassigned"; a["c"]="Unassigned"; a["o"]="Unassigned"; a["f"]="Unassigned"; a["g"]="Unassigned"; a["s"]="Unassigned";\
+#       split($2,x,","); for(i in x){split(x[i],b,":"); a[b[1]]=b[2];} \
+#       print $1,a["d"],a["p"],a["c"],a["o"],a["f"],a["g"],a["s"];}' \
+# result/taxonomy2.txt > temp/otus.tax
+#
+#
+# sed '1i OTUID\tKingdom\tPhylum\tClass\tOrder\tFamily\tGenus\tSpecies' temp/otus.tax > result/taxonomy.txt
+
+
+
+
+
+# Generate species table OTU/ASV with blanks replaced with its previous rank using R script:
+"C:\Users\c1463797\OneDrive - Cardiff University\Cardiff University\1. PhD projects\5_Microbiota_Analysis\EasyMicrobiome\script\cleanup_taxonomy_table_AA.R"
+
+head -n5 result/taxonomy.txt
+# OTUID   Kingdom Phylum  Class   Order   Family  Genus   Species
+# ASV_1   d:Fungi d:Fungi d:Fungi d:Fungi d:Fungi d:Fungi d:Fungi
+# ASV_2   d:Fungi p:Ascomycota    p:Ascomycota    p:Ascomycota    p:Ascomycota    p:Ascomycota       p:Ascomycota
+# ASV_3   d:Fungi d:Fungi d:Fungi d:Fungi d:Fungi d:Fungi d:Fungi
+# ASV_4   d:Fungi p:Ascomycota    c:Saccharomycetes       o:Saccharomycetales     f:Saccharomycetales_fam_Incertae_sedis     g:Candida       s:Candida_parapsilosis
+
+
+
+
+
+
+# Statistics for phylum, class, order, family, genus, using the rank parameter p c o f g, abbreviated for phylum, class, order, family, genus
+
+mkdir -p result/tax
+
+for i in p c o f g s;do
+"D:\Download\usearch" -sintax_summary result/otus.sintax \
+-otutabin result/otutab_rare.txt -rank ${i} \
+-output result/tax/sum_${i}.txt
+done
+
+sed -i 's/[()]//g; s/"//g; s/#//g; s/\/Chloroplast\///g' result/tax/sum_*.txt
+
+
+# List all files
+wc -l result/tax/sum_*.txt
+  #  31 result/tax/sum_c.txt
+  # 132 result/tax/sum_f.txt
+  # 178 result/tax/sum_g.txt
+  #  68 result/tax/sum_o.txt
+  #  11 result/tax/sum_p.txt
+  # 152 result/tax/sum_s.txt
+  # 572 total
+
+
+head -n3 result/tax/sum_g.txt
+# Genus   B1      B10     B11     B12     B13     B14     B15     B16     B17     B18     B1B2       B20     B22     B23     B24     B25     B26     B27     B28     B29     B3      B3B31      B32     B33     B34     B35     B37     B38     B39     B4      B40     B41     B4B43      B44     B45     B46     B47     B48     B49     B50     B51     B52     B53     B5B56      B57     B58     B6      B7      B8      B9      All
+# Unassigned      4.51    37.9    31.6    35.9    41.5    30.1    19.6    28.1    7.29    15.7       45.8    22.9    21.8    0.66    6.64    34.4    60.7    11.9    11      7.02    25.8       35      4.77    34.1    6.14    5.64    30.3    31.9    1.09    42      39.1    2219.4     35.6    16.3    49.5    59.9    19.7    1.19    6.64    60.8    28.9    13.7    2.72       34.6    68.7    10.1    52.8    0.49    1.4     33.6    33.6    38.5    6.81    51.4
+# Aspergillus     1       26.5    24.5    19.5    5.01    9.81    11.2    9.22    70.1    4.18       1.45    6.39    11.2    0.14    34.2    2.68    0.49    4.11    24.9    9.6     20.7       4.13    0.65    3.56    0.15    1.7     0.16    7.7     29.3    1.91    0.1     5.15.5     1.62    0.08    2.26    0.95    40.3    4.72    10.4    0.55    0.42    38.8    0.98       9.08    0.61    5.94    0.46    93.2    0.37    18      22.8    27.8    5.64    2.4
+
+
+head -n3 result/tax/sum_s.txt
+
+
+
+#######################################################
+#######################################################
+### 9. with reference to quantitative feature table ###
+#######################################################
+#######################################################
+
+
+
+####################################
+# dont need this step. it is for 16S
+####################################
+
+# ## Compare Greengenes97% OTUs comparison for PICRUSt/Bugbase feature prediction
+# mkdir -p result/gg/
+#
+# # method 1. usearch comparison is faster, but file overruns report errors choose method 2
+# # default under 10 cores use 1 core, over 10 cores use 10 cores
+# usearch -otutab temp/filtered.fa -otus ${db}/gg/97_otus.fa \
+# -otutabout result/gg/otutab.txt -threads 4
+# # comparison rate 80.0%, 1 core 11m, 4 cores 3m, 10 cores 2m, memory usage 743Mb
+# head -n3 result/gg/otutab.txt
+#
+# # Method 2. vsearch comparison, more accurate and slower, but more parallel 24-96 threads
+# # vsearch --usearch_global temp/filtered.fa --db ${db}/gg/97_otus.fa \
+# # --otutabout result/gg/otutab.txt --id 0.97 --threads 12
+# # comparison rate 81.04%, 1 core 30m, 12 cores 7m
+#
+# # statistics
+# usearch -otutab_stats result/gg/otutab.txt -output result/gg/otutab.stat
+# cat result/gg/otutab.stat
+
+
+
+
+
+
+
+
+#########################################
+#########################################
+### 10. space cleanup and data commit ###
+#########################################
+#########################################
+
+
+
+
+
+## Delete intermediate large files
+# rm -rf temp/*.fq
+
+# Split double-end statistics md5 values for data submission
+cd "$seq"
+
+md5sum *_1.fq.gz > md5sum1.txt
+md5sum *_2.fq.gz > md5sum2.txt
+
+paste md5sum1.txt md5sum2.txt | awk '{print $2"\t"$1"\t"$4"\t"$3}' | sed 's/*//g' > md5sum.txt
+
+# rm md5sum*
+
+# cd ..
+
+cat "$seq"/md5sum.txt
+
+
+
+
+###############################################################
+###############################################################
+#### R language diversity and species composition analysis ####
+###############################################################
+###############################################################
+
+
+## 1. alpha diversity
+#####################
+
+
+
+### 1.1 Alpha diversity box line graph
+######################################
+
+
+# I used vegan_rare.txt for the dowstram analysis:
+
+cd "${wd}"
+
+cat result/alpha/vegan_rare.txt
+
+# I manually created metadata_subsampling.txt
+cat result/alpha/metadata_subsampling.txt
+
+
+# Alpha diversity plot using
+"C:\Users\c1463797\OneDrive - Cardiff University\Cardiff University\1. PhD projects\5_Microbiota_Analysis\EasyMicrobiome\script\alpha_boxplot_AA.R"
+
+
+# View help
+# Rscript "${db}"/script/alpha_boxplot.R -h
+
+# Full parameters, diversity index optional richness chao1 ACE shannon simpson invsimpson
+
+# Use loop to plot 6 common indices
+# AA_script
+for i in `head -n1 result/alpha/vegan_rare.txt|cut -f 2-`;do
+Rscript "${db}"/script/alpha_boxplot_AA.R --alpha_index ${i} \
+--input result/alpha/vegan_rare.txt \
+--design result/metadata_subsampling.txt \
+--group pa_or_bcc --output result/alpha/ \
+--width 89 --height 59
+done
+
+
+# Original_script
+# for i in `head -n1 result/alpha/vegan_rare.txt|cut -f 2-`;do
+# Rscript "${db}"/script/alpha_boxplot.R --alpha_index ${i} \
+# --input result/alpha/vegan_rare.txt --design result/metadata_subsampling.txt \
+# --group pa_or_bcc --output result/alpha/ \
+# --width 89 --height 59
+# done
+
+# mv alpha_boxplot_TukeyHSD.txt result/alpha/ # I need to run the above code (the original one) to get the p-values
+
+
+
+
+
+
+
+### 1.2 Dilution curve
+######################
+
+# Dilution curve: take the number of OTUs in the sequence from 1%-100%, with no put-back sampling each time
+#Rarefaction from 1%, 2% ... 100% in richness (observed OTUs)-method without_replacement https://drive5.com/usearch/manual/cmd_otutab_subsample.html
+Rscript "script/alpha_rare_curve.R"
+
+# Rscript "${db}"/script/alpha_rare_curve.R \
+# --input "C/Users/c1463797/OneDrive - Cardiff University/Cardiff University/1. PhD projects/5_Microbiota_Analysis/5_1_AlgiPharma/2_before/result/alpha/alpha_rare.txt" --design "C/Users/c1463797/OneDrive - Cardiff University/Cardiff University/1. PhD projects/5_Microbiota_Analysis/5_1_AlgiPharma/2_before/result/alpha/result/metadata_subsampling.txt"\
+# --group richness --output result/alpha/ \
+# --width 120 --height 59
+
+
+
+
+
+### 1.3 Diversity Venn diagram
+##############################
+
+
+### groups to compare:-f input file,-a/b/c/d/g group names,-w/u for width and height inches,-p output file name suffix
+bash "${db}"/script/sp_vennDiagram.sh \
+-f result/alpha/otu_rare_group_exist.txt \
+-a Pa -b BCC  \
+-w 4 -u 4 \
+-p Pa_BCC
+
+
+
+
+
+# Four groups to compare, see input file directory for graph and code, run directory is the current project root directory
+# bash "${db}"/script/sp_vennDiagram.sh \
+# -f result/alpha/otu_group_exist.txt \
+# -a Pa -b BCC -c blank -d mock -e All \
+# -w 3 -u 3 \
+# -p Pa_BCC_blank_mock_All
+
+
+
+
+
+## 2. Beta Diversity
+####################
+
+
+
+### 2.1 Distance matrix heatmap pheatmap
+#########################################
+
+
+"C:/Users/c1463797/OneDrive - Cardiff University/Cardiff University/1. PhD projects/5_Microbiota_Analysis/EasyMicrobiome/script/hierarchical_clustering_AA.R"
+
+
+## Take bray_curtis as an example, -f input file,-h whether to cluster TRUE/FALSE,-u/v for width and height inches
+bash "${db}"/script/sp_pheatmap.sh \
+-f result/beta/bray_curtis.txt \
+-H 'TRUE' -u 15 -v 15
+
+
+
+# Add grouping comments, such as genotype and location in columns 2, 4
+# The -f option specifies the columns to extract. In this case, the -f 1,4 option means that columns 1 and 4 will be extracted.
+cut -f 1,3 result/metadata_subsampling.txt > temp/group.txt
+
+
+# If I want to add more variables to the heatmap
+# cut -f 1,4,5,6,7 result/beta/metadata_subsampling.txt > temp/group.txt
+
+# -P adds row comments to the file, -Q adds column comments
+bash "${db}"/script/sp_pheatmap.sh \
+-f result/beta/bray_curtis.txt \
+-H 'TRUE' -u 15 -v 15 \
+-P temp/group.txt -Q temp/group.txt
+
+# The distance matrix is similar to the correlation, try corrplot or ggcorrplot to plot more variables
+# - [plot correlation coefficient matrix corrplot](http://mp.weixin.qq.com/s/H4_2_vb2w_njxPziDzV4HQ)
+# - [correlation matrix visualization ggcorrplot](http://mp.weixin.qq.com/s/AEfPqWO3S0mRnDZ_Ws9fnw)
+
+
+
+
+### 2.2 Principal coordinate analysis PCoA
+###########################################
+
+
+# input file, select grouping, output file, image size mm, statistics see beta_pcoa_stat.txt
+# Rscript "${db}"/script/beta_pcoa.R \
+# --input result/beta/bray_curtis.txt \
+# --design result/beta/metadata_subsampling.txt \
+# --group pa_or_bcc --label FALSE --width 89 --height 59 \
+# --output result/beta/bray_curtis.pcoa.pdf
+
+
+
+# Add sample label --label TRUE
+# Rscript "${db}"/script/beta_pcoa.R \
+# --input result/beta/bray_curtis.txt --design result/metadata_subsampling.txt \
+# --group pa_or_bcc --label TRUE --width 89 --height 59 \
+# --output result/beta/bray_curtis.pcoa.label.pdf
+# mv beta_pcoa_stat.txt result/beta/
+
+
+### 2.3 Restricted Principal Coordinate Analysis CPCoA
+#######################################################
+#   Rscript ${db}/script/beta_cpcoa.R \
+# --input result/beta/bray_curtis.txt --design result/metadata_subsampling.txt \
+# --group group --output result/beta/bray_curtis.cpcoa.pdf \
+# --width 89 --height 59
+#
+#
+# # Add sample labels --label TRUE
+# Rscript ${db}/script/beta_cpcoa.R \
+# --input result/beta/bray_curtis.txt --design result/metadata_subsampling.txt \
+# --group Group --label TRUE --width 89 --height 59 \
+# --output result/beta/bray_curtis.cpcoa.label.pdf
+
+
+
+# NMDS
+C:/Users/c1463797/OneDrive - Cardiff University/Cardiff University/1. PhD projects/5_Microbiota_Analysis/EasyMicrobiome/script/nmds_AA.R
+# Call:
+# metaMDS(comm = beta_div, distance = "bray", k = 3, trymax = 50)
+#
+# global Multidimensional Scaling using monoMDS
+#
+# Data:     beta_div
+# Distance: user supplied
+#
+# Dimensions: 3
+# Stress:     0.08389384
+# Stress type 1, weak ties
+# Best solution was not repeated before 50 tries
+# The best solution was from try 32 (random start)
+# Scaling: centring, PC rotation
+# Species: scores missing
+
+
+PEMANOVA test
+# The PERMANOVA test results indicate that there is a significant difference between the groups based on the dissimilarity matrix beta_div. The p-value for the test is 0.003, which is smaller than the significance level of 0.05, suggesting that there is a significant effect of the grouping variable on the dissimilarity.
+#
+# Here is the summary of the PERMANOVA test:
+#
+#   yaml
+#
+# Permutation test for adonis under reduced model
+# Terms added sequentially (first to last)
+# Permutation: free
+# Number of permutations: 999
+#
+# adonis2(formula = beta_div ~ groups, permutations = 999)
+#          Df SumOfSqs     R2     F Pr(>F)
+# groups    1   0.3452 0.0585 3.231  0.001 ***
+# Residual 52   5.5559 0.9415
+# Total    53   5.9011 1.0000
+# ---
+# Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+# The "groups" term represents the grouping variable, and the "F" value of 3.1399 indicates the significance of the group differences. The p-value (Pr(>F)) of 0.003 confirms the statistical significance.
+
+
+
+
+## 3. Species composition Taxonomy
+###################################
+
+
+
+### 3.1 Stacked bar chart Stackplot
+####################################
+
+
+## Using the gate(p) level as an example, the results include two files output.sample/group.pdf
+
+# Phylum
+"C:/Users/c1463797/OneDrive - Cardiff University/Cardiff University/1. PhD projects/5_Microbiota_Analysis/EasyMicrobiome/script/tax_stackplot_family_AA.R"
+
+Rscript "${db}"/script/tax_stackplot_family_AA.R \
+--input result/tax/sum_p.txt --design result/beta/metadata_subsampling.txt \
+--group pa_or_bcc --color manual1 --legend 7 --width 89 --height 59 \
+--output result/tax/sum_p.stackplot
+
+
+
+## Using the gate(p) level as an example, the results include two files output.sample/group.pdf
+
+
+# Genus
+"C:/Users/c1463797/OneDrive - Cardiff University/Cardiff University/1. PhD projects/5_Microbiota_Analysis/EasyMicrobiome/script/tax_stackplot_genus_AA.R"
+
+Rscript "${db}"/script/tax_stackplot_genus_AA.R \
+--input result/tax/sum_g.txt --design result/beta/metadata_subsampling.txt \
+--group pa_or_bcc --color manual1 --legend 7 --width 89 --height 59 \
+--output result/tax/sum_g.stackplot
+
+
+
+# Genus
+"C:/Users/c1463797/OneDrive - Cardiff University/Cardiff University/1. PhD projects/5_Microbiota_Analysis/EasyMicrobiome/script/tax_stackplot_species_AA.R"
+
+
+
+
+
+## Using the gate(p) level as an example, the results include two files output.sample/group.pdf
+# Species
+# Rscript "${db}"/script/tax_stackplot.R \
+# --input result/tax/sum_s.txt --design result/metadata_subsampling.txt \
+# --group pa_or_bcc --color ggplot --legend 7 --width 89 --height 59 \
+# --output result/tax/sum_s.stackplot
+
+
+
+# Batch plotting input including p/c/o/f/g for 5 levels
+# for i in p c o f g; do
+# Rscript "${db}"/script/tax_stackplot_AA.R \
+# --input result/tax/sum_${i}.txt --design result/beta/metadata_subsampling.txt \
+# --group pa_or_bcc --output result/tax/sum_${i}.stackplot \
+# --color manual1 --legend 8 --width 89 --height 59; done
+
+
+
+
+
+### 3.2 string/circle plot circlize
+####################################
+
+
+### Take the outline(class,c) as an example, plot the first 5 groups
+i=s
+Rscript "${db}"/script/tax_circlize.R \
+--input result/tax/sum_${i}.txt --design result/metadata_subsampling.txt \
+--group pa_or_bcc --legend 5
+
+
+# result is located in the current directory circlize.pdf (random color), circlize_legend.pdf (specify color + legend)
+# move and rename consistent with the classification level
+mv circlize.pdf result/tax/sum_${i}.circlize.pdf
+mv circlize_legend.pdf result/tax/sum_${i}.circlize_legend.pdf
+
+
+
+### Take the outline(class,c) as an example, plot the first 5 groups
+i=g
+Rscript "${db}"/script/tax_circlize.R \
+--input result/tax/sum_${i}.txt --design result/metadata_subsampling.txt \
+--group pa_or_bcc --legend 5
+
+
+# result is located in the current directory circlize.pdf (random color), circlize_legend.pdf (specify color + legend)
+# move and rename consistent with the classification level
+mv circlize.pdf result/tax/sum_${i}.circlize.pdf
+mv circlize_legend.pdf result/tax/sum_${i}.circlize_legend.pdf
+
+
+
+
+
+### 3.3 Tree map treemap (reference)
+#####################################
+
+
+??????????????????????
+?????????????????????
+i need re-visit it
+### Multi-level containment species relationship, input feature table and species annotations, output treemap
+# Specify the number of included features and image width and height, 100 ASVs takes 12s
+Rscript "${db}"/script/tax_maptree.R \
+--input result/otutab_rare.txt --taxonomy result/taxonomy.txt \
+--output result/tax/tax_maptree.pdf \
+--topN 20 --width 183 --height 118
+
+
+
+
+
+
+
+## 24. Difference comparison
+############################
+
+## 1. R language difference analysis
+#####################################
+
+
+### 1.1 Difference comparison
+
+mkdir -p result/compare/
+  ## Input feature table, metadata; specify group column name, comparison group and abundance
+  # Select method wilcox/t.test/edgeR, pvalue and fdr and output directory
+compare="Pa-BCC"
+Rscript "${db}"/script/compare.R \
+--input result/otutab_rare.txt --design result/metadata_subsampling.txt \
+--group pa_or_bcc --compare ${compare} --threshold 0.1 \
+--method wilcox --pvalue 0.05 --fdr 0.2 \
+--output result/compare/
+# [1] "Your are using Wilcoxon test!"
+# 
+# Depleted Enriched   NotSig
+#       20       40       64
+
+
+
+
+# t-test
+# compare="Pa-BCC"
+Rscript "${db}"/script/compare.R \
+--input result/otutab_rare.txt --design result/metadata_subsampling.txt \
+--group pa_or_bcc --compare ${compare} --threshold 0.1 \
+--method t.test --pvalue 0.05 --fdr 0.2 \
+--output result/compare/
+# [1] "Your are using T test!"
+# 
+# Enriched   NotSig
+#        6      118
+
+
+
+
+
+
+### 1.2 Volcano diagram
+########################
+
+
+
+  # Input the result of compare.R, output the volcano chart with data labels, you can specify the image size
+Rscript "${db}"/script/compare_volcano.R \
+--input result/compare/${compare}.txt \
+--output result/compare/${compare}.volcano.pdf \
+--width 89 --height 59
+
+
+
+
+
+
+### 1.3 Heat map
+################
+
+??????????????
+revisit???
+
+
+bash "${db}"/script/compare_heatmap.sh -i result/compare/${compare}.txt -l 7 \
+-d result/metadata_subsampling.txt -A pa_or_bcc \
+-t result/taxonomy.txt \
+-w 8 -h 5 -s 7 \
+-o result/compare/${compare}
+
+
+
+
+
+
+
+
+### 1.4 Manhattan plot
+
+# i difference comparison result,t species annotation,p legend,w width,v height,s font size,l legend maximum
+# legend display not figure, can increase height v to 119+ can, later use AI puzzle for KO-WT.heatmap.emf
+bash "${db}"/script/compare_manhattan.sh \
+-i result/compare/Pa_BCC.txt \
+-t result/taxonomy.txt \
+-p result/tax/sum_g.txt \
+-w 183 -v 59 -s 7 -l 10 \
+-o result/compare/${compare}.manhattan.g.pdf
+
+
+# The top image has only 6 doors, switch to outline c and -L Class to show details
+bash "${db}"/script/compare_manhattan.sh -i result/compare/${compare}.txt \
+-t result/taxonomy.txt \
+-p result/tax/sum_c.txt \
+-w 183 -v 59 -s 7 -l 10 -L Class \
+-o result/compare/${compare}.manhattan.c.pdf
+
+
+# Show full legend, then use AI puzzle
+bash "${db}"/script/compare_manhattan.sh -i result/compare/${compare}.txt \
+-t result/taxonomy.txt \
+-p result/tax/sum_c.txt \
+-w 183 -v 149 -s 7 -l 10 -L Class \
+-o result/compare/${compare}.manhattan.c.legend.pdf
+
+
+
+### 1.5 Plotting of individual features
+
+### Filter to show difference ASVs, descending sequence by KO group abundance, take ID to show top 10
+
+awk '$4<0.05' result/compare/Pa_BCC.txt | sort -k7,7nr | cut -f1 | head
+
+
+# Differences OTU details show
+Rscript "${db}"/script/alpha_boxplot.R --alpha_index ASV_2 \
+--input result/otutab_rare.txt --design result/metadata_subsampling.txt \
+--transpose TRUE --scale TRUE \
+--width 89 --height 59 \
+--group Group --output result/compare/feature_
+# ID does not exist will report an error: Error in data.frame(...) , check.names = FALSE) : parameter value means different number of rows: 0, 18 Calls: alpha_boxplot -> cbind -> cbind -> data.frame
+
+# Specify a column to be sorted: by genus abundance mean All descending
+csvtk -t sort -k All:nr result/tax/sum_g.txt | head
+# Differential genus details display
+Rscript "${db}"/script/alpha_boxplot.R --alpha_index Lysobacter \
+--input result/tax/sum_g.txt --design result/metadata.txt \
+--transpose TRUE \
+--width 89 --height 59 \
+--group Group --output result/compare/feature_
+
+### 1.5 Ternary diagram
+
+### For reference examples see: result\compare\ternary\ternary.Rmd documentation
+## Alternative tutorial [246. Application of ternary diagrams and plotting in practice](https://mp.weixin.qq.com/s/3w3ncpwjQaMRtmIOtr2Jvw)
+
+
+
+
+###################################
+## 2. STAMP input file preparation
+###################################
+
+### 2.1 Generating input files
+
+# Rscript "${db}"/script/format2stamp.R -h
+
+
+
+mkdir -p result/stamp
+
+Rscript "${db}"/script/format2stamp.R --input result/otutab_rare.txt \
+--taxonomy result/taxonomy.txt --threshold 0.01 \
+--output result/stamp/tax
+### Optional Rmd documentation is available in result/format2stamp.Rmd
+
+### 2.2 Plotting extended histograms and tables
+
+compare="Pa-BCC"
+# Replace ASV (result/otutab.txt) with genus (result/tax/sum_g.txt)
+Rscript "${db}"/script/compare_stamp.R \
+--input result/stamp/tax_5Family.txt --metadata result/metadata_subsampling.txt \
+--group pa_or_bcc --compare ${compare} --threshold 0.1 \
+--method "t.test" --pvalue 0.05 --fdr "none" \
+--width 189 --height 159 \
+--output result/stamp/${compare}
+
+## Optional Rmd documentation is available in result/CompareStamp.Rmd
+
+
+
+
+
+
+###################################
+###################################
+## 3. LEfSe input file preparation
+##################################
+##################################
+
+
+### 3.1. command-line generated files
+## Optional command line generated input file
+
+
+# Rscript "${db}"/script/format2lefse.R -h
+mkdir -p result/lefse
+# threshold control abundance filter to control the number of branches in the plot
+Rscript "${db}"/script/format2lefse.R --input result/otutab_rare.txt \
+--taxonomy result/taxonomy.txt --design result/metadata_subsampling.txt \
+--group pa_or_bcc --threshold 0.4 \
+--output result/lefse/LEfSe
+
+### 3.2 Rmd generates input files (optional)
+#1. the existence of three files otutab.txt, metadata.txt, taxonomy.txt in the result directory.
+#2. Rstudio opens format2lefse.Rmd in EasyAmplicon, saves it to the result directory and Knit generates the input file and the recalculable web page.
+
+### 3.3 LEfSe analysis
+### Method 1. Open LEfSe.txt and submit it online at http://www.ehbio.com/ImageGP/index.php/Home/Index/LEFSe.html
+### Method 2. LEfSe local analysis (Linux system only, optional), see appendix for reference code
+# Method 3. Use online on LEfSe official website
+
+
+# 25, QIIME 2 analysis process
+
+# Code details see qiime2/pipeline_qiime2.sh
+
+
+# 31、Functional prediction
+
+# # 1. PICRUSt function prediction
+
+
+
+
+
+
+# PICRUSt 1.0
+# Method 1. online analysis using http://www.ehbio.com/ImageGP gg/otutab.txt
+# Method 2. Linux server users can refer to "Appendix 2. PICRUSt Functional Prediction" for software installation and analysis
+# The results are then compared for differences using STAMP/R
+
+# R language plotting
+# Input file format adjustment
+l=L2
+sed '/# Const/d;s/OTU //' result/picrust/all_level.ko.${l}.txt > result/picrust/${l}.txt
+num=`head -n1 result/picrust/${l}.txt|wc -w`
+paste <(cut -f $num result/picrust/${l}.txt) <(cut -f 1-$[num-1] result/picrust/${l}.txt) \
+> result/picrust/${l}.spf
+cut -f 2- result/picrust/${l}.spf > result/picrust/${l}.mat.txt
+awk 'BEGIN{FS=OFS="\t"} {print $2,$1}' result/picrust/${l}.spf | sed 's/;/\t/' | sed '1 s/ID/Pathway\tCategory/' \
+> result/picrust/${l}.anno.txt
+# Difference comparison
+compare="KO-WT"
+Rscript ${db}/script/compare.R \
+--input result/picrust/${l}.mat.txt --design result/metadata.txt \
+--group Group --compare ${compare} --threshold 0 \
+--method wilcox --pvalue 0.05 --fdr 0.2 \
+--output result/picrust/
+  # Can filter on the result ${compare}.txt
+  # Plot a histogram for the specified group (A/B), colored and faceted by high classification level
+  Rscript ${db}/script/compare_hierarchy_facet.R \
+--input result/picrust/${compare}.txt \
+--data MeanA \
+--annotation result/picrust/${l}.anno.txt \
+--output result/picrust/${compare}.MeanA.bar.pdf
+# Plot two sets of significantly different bars, faceted by high classification level
+Rscript ${db}/script/compare_hierarchy_facet2.R \
+--input result/picrust/${compare}.txt \
+--pvalue 0.05 --fdr 0.1 \
+--annotation result/picrust/${l}.anno.txt \
+--output result/picrust/${compare}.bar.pdf
+
+# PICRUSt 2.0
+# Software Installation, Appendix 6. PICRUSt Environment Export and Import
+# Usage, Appendix 7. PICRUSt2 Feature Prediction
+
+## 2. Elemental cycle FAPROTAX
+
+## Method 1. Online analysis, recommended to use http://www.ehbio.com/ImageGP online analysis
+## Method 2. analysis under Linux, e.g. QIIME 2 environment, see Appendix 3 for details
+
+
+
+
+## 3. Bugbase bacterial phenotype prediction
+
+## 1. Bugbase command line analysis
+cd "${wd}"/result
+bugbase="${db}"/script/BugBase
+rm -rf bugbase/
+
+### Script has been optimized for R4.0, biom package updated to biomformat
+Rscript "${bugbase}"/bin/run.bugbase.r -L "${bugbase}" \
+-i gg/otutab.txt -m metadata.txt -c Group -o bugbase/
+
+  ### 2. Other available analysis
+  # Use http://www.ehbio.com/ImageGP
+  # Official website, https://bugbase.cs.umn.edu/ , with error reporting, not recommended
+  # Bugbase bacterial phenotype prediction Linux, see Appendix 4. bugbase bacterial phenotype prediction
+
+
+  # 32, MachineLearning machine learning
+
+  # RandomForest package using R code see advanced/RandomForestClassification and RandomForestRegression
+  # # Silme2 RandomForest/Adaboost using code in EasyMicrobiome/script/slime2 directory slime2.py, see Appendix 5 for details
+
+
+
+
+
+###############################
+###############################
+# 33, Evolution Evolution Tree
+###############################
+###############################
+
+cd "${wd}"
+mkdir -p result/tree
+cd "${wd}"/result/tree
+
+## 1. Filter by high abundance/specified features
+
+## 1. Filter features by abundance, generally select 0.001 or 0.005, and the number of OTUs is in the range of 30-150
+# Number of ASVs in the feature table, e.g. 1609 in total
+tail -n+2 ... /otutab_rare.txt | wc -l
+#Filter high abundance OTUs by relative abundance 0.2%
+usearch -otutab_trim ... /otutab_rare.txt \
+-min_otu_freq 0.002 \
+-output otutab.txt
+
+# count the number of filtered OTU table features, total ~81
+tail -n+2 ../otutab_rare.txt | wc -l
+# 1927
+
+# method 2. filter by number
+# sort by abundance, default from largest to smallest
+"D:\Download\usearch" -otutab_sortotus ../otutab_rare.txt \
+-output otutab_sort.txt
+# extract the OTU IDs for the specified number of Tops in high abundance, e.g. Top100,
+# sed '1 s/#OTU ID/OTUID/' otutab_sort.txt \
+# | head -n101 > otutab.txt
+
+# Modify the feature ID column name
+sed -i '1 s/#OTU ID/OTUID/' otutab_sort.txt
+# Extract the ID for extracting the sequence
+cut -f 1 otutab_sort.txt > otutab_high.id
+
+# Filter high abundance bacteria/specify differential bacteria corresponding to OTU sequences
+"D:\Download\usearch" -fastx_getseqs ../otus.fa -labels otutab_high.id \
+-fastaout otus.fa
+
+head -n 2 otus.fa
+
+## Filter OTU comments on species
+awk 'NR==FNR{a[$1]=$0} NR>FNR{print a[$1]}' "C:/Users/c1463797/OneDrive - Cardiff University/Cardiff University/1. PhD projects/5_Microbiota_Analysis/5_1_AlgiPharma/2_before/result/taxonomy.txt" \
+otutab_high.id > otutab_high.tax
+
+
+#Obtain OTU corresponding group mean for sample heat map
+# Relying on previous otutab_mean.R calculated mean values grouped by Group
+awk 'NR==FNR{a[$1]=$0} NR>FNR{print a[$1]}' . /otutab_mean.txt otutab_high.id \
+| sed 's/#OTU ID/OTUID/' > otutab_high.mean
+head -n3 otutab_high.mean
+
+# Merge species annotations and abundances into annotation file
+cut -f 2- otutab_high.mean > temp
+paste otutab_high.tax temp > annotation.txt
+head -n 3 annotation.txt
+
+
+
+
+## 2. Build the evolution tree
+###############################
+
+## Starting file is otus.fa (sequence), annotation.txt (species and relative abundance) file in result/tree directory
+# Muscle software for sequence alignment, 3s
+muscle -in otus.fa -out otus_aligned.fas
+
+
+
+
+
+### Method 1. Fast construction of ML evolutionary tree using IQ-TREE, 2m
+rm -rf iqtree
+mkdir -p iqtree
+iqtree -s otus_aligned.fas \
+-bb 1000 -redo -alrt 1000 -nt AUTO \
+-pre iqtree/otus
+
+
+
+
+
+
+
+### Method 2. FastTree quick tree building (Linux)
+### Note that the FastTree software input file is a fasta format file, not the Phylip format normally used. The output file is in Newick format.
+# This method is suitable for large data, such as a phylogenetic tree of several hundred OTUs!
+# To install fasttree on Ubuntu you can use `apt install fasttree`
+# fasttree -gtr -nt otus_aligned.fas > otus.nwk
+
+## 3. Evolutionary tree beautification
+
+## Visit http://itol.embl.de/, upload otus.nwk, and drag and drop the annotation scheme generated below on the tree to beautify it
+
+## Scheme 1. outer circle color, shape classification and abundance scheme
+## annotation.txt OTU corresponding species annotations and abundances
+# -a will terminate if no input column is found (not executed by default) -c convert integer columns to factor or numbers with decimal points, -t convert ID columns when deviating from prompt labels, -w color bands, region widths, etc., -D output directory, -i OTU column names, -l OTU display names such as species/genus/family names
+# cd ${wd}/result/tree
+Rscript "${db}"/script/table2itol.R -a -c double -D plan1 -i OTUID -l Genus -t %s -w 0.5 annotation.txt
+## Generate a separate file for each column in the annotation file
+
+## Option 2. generate annotation files for abundance bars
+Rscript "${db}"/script/table2itol.R -a -d -c none -D plan2 -b Phylum -i OTUID -l Genus -t %s -w 0.5 annotation.txt
+
+## Option 3. Generate heat map annotation file
+Rscript ${db}/script/table2itol.R -c keep -D plan3 -i OTUID -t %s otutab.txt
+
+## Plan 4. Convert integers to factors to generate comment files
+Rscript ${db}/script/table2itol.R -a -c factor -D plan4 -i OTUID -l Genus -t %s -w 0 annotation.txt
+
+# Tree iqtree/otus.contree is displayed on http://itol.embl.de/, drag and drop files from different Plan to add tree annotations
+
+# Return to the working directory
+cd ${wd}
+
+## 4. Evolutionary tree visualization
+
+https://www.bic.ac.cn/BIC/#/ provides an easier way to visualize
+
+  # Additional videos
+
+  # Catalog Supp, web class has corresponding videos (may be numbered differently, look for keywords)
+
+
+  ## S1. Network Analysis R/CytoGephi
+
+  # Catalog Supp/S1NetWork
+
+  ## S2. Traceability and Markov chains
+
+## Catalog Supp/S2SourcetrackerFeastMarkov
+
+
+## S11. Network Analysis ggClusterNet
+
+# Code: advanced/ggClusterNet/Practice.Rmd
+
+## S12, Microeco package data visualization
+
+# Code: advanced/microeco/Practice.Rmd
+
+
+# Appendix: Analysis under Linux server (optional learning)
+
+# Note: The following code may not run under Windows, it is recommended to install the relevant program under Linux, or conda under the Linux subsystem under Windows
+
+## 1. LEfSe analysis
+
+mkdir -p ~/amplicon/lefse
+cd ~/amplicon/lefse
+# format2lefse.Rmd code creation or upload input file LEfSe.txt
+# install lefse
+# conda install lefse
+
+# convert format to lefse internal format
+lefse-format_input.py LEfSe.txt input.in -c 1 -o 1000000
+#Run lefse
+run_lefse.py input.in input.res
+#plot species tree annotation differences
+lefse-plot_cladogram.py input.res cladogram.pdf --format pdf
+#plot histogram of all differencefeatures
+lefse-plot_res.py input.res res.pdf --format pdf
+#plot individual features histogram (same as barplot in STAMP)
+head input.res #View the list of variance features
+lefse-plot_features.py -f one --feature_name "Bacteria.Firmicutes.Bacilli.Bacillales.Planococcaceae.Paenisporosarcina" \
+--format pdf input.in input.res Bacilli.pdf
+# batch plot all differencesfeatures histogram, use with caution (hundreds of differences results histogram is also difficult to read)
+mkdir -p features
+lefse-plot_features.py -f diff --archive none --format pdf \
+input.in input.res features/
+
+
+  ## 2. PICRUSt feature prediction
+
+  ## Recommended to use http://www.ehbio.com/ImageGP online analysis
+  ## There are Linux server users can refer to the following code to build the local process
+  #Dependent database is large (243M), you need to download it by yourself
+  db=~/db/
+  mkdir -p ${db}/picrust/ cd ${db}/picrust/
+  wget -c http://bailab.genetics.ac.cn/db/picrust/16S_13_5_precalculated.tab.gz
+wget -c http://bailab.genetics.ac.cn/db/picrust/ko_13_5_precalculated.tab.gz
+# Method 1. conda installs picrust directly
+n=picrust
+conda create -n ${n} ${n} -c bioconda -y
+# Method 2. Download the software environment meta and unzip it, refer to picrust2 installation
+
+wd=/mnt/c/amplicon
+cd $wd/result/gg
+# Start the environment
+conda activate picrust
+# Upload gg/otutab.txt to the current directory
+# Convert to OTU table common format for downstream analysis and statistics
+biom convert -i otutab.txt \
+-o otutab.biom \
+--table-type="OTU table" --to-json
+
+# Set the database directory, e.g. /mnt/d/db
+db=~/db
+# normalize the number of copies, 30s, 102M
+normalize_by_copy_number.py -i otutab.biom \
+-o otutab_norm.biom \
+-c ${db}/picrust/16S_13_5_precalculated.tab.gz
+#predict_macrogenomes KO table, 3m,1.5G, biom for easy downstream categorization, txt for easy viewing and analysis
+predict_metagenomes.py -i otutab_norm.biom \
+-o ko.biom \
+-c ${db}/picrust/ko_13_5_precalculated.tab.gz
+predict_metagenomes.py -f -i otutab_norm.biom \
+-o ko.txt \
+-c ${db}/picrust/ko_13_5_precalculated.tab.gz
+
+#Summary by functional level, -c output KEGG_Pathways, in levels 1-3
+sed -i '/# Constru/d;s/#OTU //' ko.txt
+num=`head -n1 ko.txt|wc -w`
+paste <(cut -f $num ko.txt) <(cut -f 1-$[num-1] ko.txt) > ko.spf
+for i in 1 2 3;do
+categorize_by_function.py -f -i ko.biom -c KEGG_Pathways -l ${i} -o pathway${i}.txt
+sed -i '/# Const/d;s/#OTU //' pathway${i}.txt
+paste <(cut -f $num pathway${i}.txt) <(cut -f 1-$[num-1] pathway${i}.txt) > pathway${i}.spf
+done
+wc -l *.spf
+
+
+## 3. FAPROTAXS element loop
+
+## Set the working directory
+wd=/mnt/c/amplicon/result/faprotax/
+  mkdir -p ${wd} && cd ${wd}
+# Set the script directory
+sd=/mnt/c/EasyMicrobiome/script/FAPROTAX_1.2.6
+
+### 1. Software Installation
+# Note: The software has been downloaded to the EasyAmplicon/script directory and can be run under qiime2 environment to satisfy the dependencies
+# (Optional) Download the new version of the software, take version 1.2.6 as an example, update the database on 2022/7/14
+#wget -c https://pages.uoregon.edu/slouca/LoucaLab/archive/FAPROTAX/SECTION_Download/MODULE_Downloads/CLASS_Latest%20release/UNIT_ FAPROTAX_1.2.6/FAPROTAX_1.2.6.zip
+#unzip
+#unzip FAPROTAX_1.2.6.zip
+#(Optional) dependencies, you can install dependencies with conda
+#conda install numpy
+#conda install biom
+# View conda environment name and location
+# conda env list
+# create a new python3 environment and configure dependencies, or enter the qiime2 python3 environment
+conda activate qiime2-2022.11
+# source /home/silico_biotech/miniconda3/envs/qiime2/bin/activate
+# test if it works, popup help means it works
+python $sd/collapse_table.py
+
+### 2. make input OTU table
+## Convert txt to biom json format
+biom convert -i ... /otutab_rare.txt -o otutab_rare.biom --table-type="OTU table" --to-json
+#Add species annotations
+biom add-metadata -i otutab_rare.biom --observation-metadata-fp ... /taxonomy2.txt \
+-o otutab_rare_tax.biom --sc-separated taxonomy \
+--observation-header OTUID,taxonomy
+### Specify input file, species annotation, output file, annotation column name, attribute column name
+
+### 3. FAPROTAX function prediction
+#python run collapse_table.py script, input with species annotated OTU table tax.biom, ### 3.
+#-g specifies database location, species annotated column names, output process information, forced override results, results file and details
+#download faprotax.txt, with experimental design for statistical analysis
+#faprotax_report.txt to see which OTUs are sourced specifically in each category
+python ${sd}/collapse_table.py -i otutab_rare_tax.biom \
+-g ${sd}/FAPROTAX.txt \
+--collapse_by_metadata 'taxonomy' -v --force \
+-o faprotax.txt -r faprotax_report.txt
+
+### 4. make OTU corresponding function annotated with or without matrix
+### Filter the ASV(OTU) comment line, and the previous line title
+grep 'ASV_' -B 1 faprotax_report.txt | grep -v -P '^--$' > faprotax_report.clean
+# The faprotax_report_sum.pl script organizes the data into a table, located in public/scrit
+perl ${sd}/.. /faprotax_report_sum.pl -i faprotax_report.clean -o faprotax_report
+# View function with or without matrix, -S no line break
+less -S faprotax_report.mat
+
+
+## 4. Bugbase bacterial phenotype prediction
+
+### 1. software installation (integrated into EasyMicrobiome, original code needs to be updated to run at present)
+## There are two methods to choose, the first one is recommended, the second one is optional and only needs to be run once
+# method 1. git download, need to have git
+# git clone https://github.com/knights-lab/BugBase
+# method 2. download and unpack
+# wget -c https://github.com/knights-lab/BugBase/archive/master.zip
+# mv master.zip BugBase.zip
+# unzip BugBase.zip
+# mv BugBase-master/ BugBase
+
+cd BugBase
+# Install the dependency package
+export BUGBASE_PATH=`pwd`
+export PATH=$PATH:`pwd`/bin
+#All dependencies are installed
+run.bugbase.r -h
+#test data
+run.bugbase.r -i doc/data/HMP_s15.txt -m doc/data/HMP_map.txt -c HMPBODYSUBSITE -o output
+
+
+### 2. Prepare the input file
+cd ~/amplicon/result
+### Input file: biom format based on greengene OTU table (local analysis supports txt format without conversion) and mapping file (add # to the first line of metadata.txt)
+# upload the experimental design + the otutab_gg.txt just generated
+#Generate biom1.0 format for online analysis
+biom convert -i gg/otutab.txt -o otutab_gg.biom --table-type="OTU table" --to-json
+sed '1 s/^/#/' metadata.txt > MappingFile.txt
+### Download otutab_gg.biom and MappingFile.txt for online analysis
+
+### 3. local analysis
+export BUGBASE_PATH=`pwd`
+export PATH=$PATH:`pwd`/bin
+run.bugbase.r -i otutab_gg.txt -m MappingFile.txt -c Group -o phenotype/
+
+  ## 5. silme2 random forest /Adaboost
+
+  ## Download and install
+  # cd ~/software/
+  # wget https://github.com/swo/slime2/archive/master.zip
+  # mv master.zip slime2.zip
+  # unzip slime2.zip
+  # mv slime2-master/ slime2
+  # cp slime2/slime2.py ~/bin/
+  # chmod +x ~/bin/slime2.py
+# Install the dependency packages
+# sudo pip3 install --upgrade pip
+# sudo pip3 install pandas
+# sudo pip3 install sklearn
+
+# Use the real world (Python3 environment with QIIME 2, for example in Windows)
+conda activate qiime2-2022.11
+cd /mnt/c/EasyMicrobiome/script/slime2
+#10,000 calculations with adaboost (16.7s), 10 million recommended
+. /slime2.py otutab.txt design.txt --normalize --tag ab_e4 ab -n 10000
+#10,000 (14.5s) calculations with RandomForest, million recommended, multi-threaded support
+. /slime2.py otutab.txt design.txt --normalize --tag rf_e4 rf -n 10000
+
+
+## 6. PICRUSt2 environment export and import
+
+## Method 1. direct installation
+n=picrust2
+conda create -n ${n} -c bioconda -c conda-forge ${n}=2.3.0_b
+# Load the environment
+conda activate ${n}
+
+# Method 2. export the installation environment
+cd ~/db/conda/
+  # Set the environment name
+  n=picrust2
+conda activate ${n}
+# Package the environment as a zip archive
+conda pack -n ${n} -o ${n}.tar.gz
+# Export the list of software installations
+conda env export > ${n}.yml
+# Add permissions for easy download and use by others
+chmod 755 ${n}. *
+
+  # Method 3. import the installation environment, such as qiime2 humann2 meta (including picurst)
+  n=picrust2
+# Copy the installation package, or download my environment package
+wget -c http://bailab.genetics.ac.cn/db/conda/${n}.tar.gz
+# Specify the installation directory and unpack it
+condapath=~/miniconda2
+mkdir -p ${condapath}/envs/${n}
+tar -xvzf ${n}.tar.gz -C ${condapath}/envs/${n}
+# Activate the environment and initialize
+source ${condapath}/envs/${n}/bin/activate
+conda unpack
+
+## 7. PICRUSt2 function prediction
+
+# (optional) PICRUSt2 (Linux subsystem under Linux/Windows, >16GB RAM required)
+# Install
+conda create -n picrust2 -c bioconda -c conda-forge picrust2=2.3.0_b
+# If this method does not work, you can use Appendix 6 to download the installation package directly and unzip it to use
+
+# Load the environment
+conda activate picrust2
+# Enter the working directory, the server should modify the working directory
+wd=/mnt/c/amplicon/result/picrust2
+mkdir -p ${wd} && cd ${wd}
+# Run process with 15.7GB of memory, 12m elapsed time
+picrust2_pipeline.py -s . /otus.fa -i ... /otutab.txt -o . / -p 8
+# Add EC/KO/Pathway comments
+add_descriptions.py -i pathways_out/path_abun_unstrat.tsv.gz -m METACYC \
+-o pathways_out/path_abun_unstrat_descrip.tsv.gz
+add_descriptions.py -i EC_metagenome_out/pred_metagenome_unstrat.tsv.gz -m EC \
+-o EC_metagenome_out/pred_metagenome_unstrat_descrip.tsv.gz
+add_descriptions.py -i KO_metagenome_out/pred_metagenome_unstrat.tsv.gz -m KO
+-o KO_metagenome_out/pred_metagenome_unstrat_descrip.tsv.gz
+# KEGG merge by hierarchy
+zcat KO_metagenome_out/pred_metagenome_unstrat.tsv.gz > KEGG.KO.txt
+python3 ${db}/script/summarizeAbundance.py \
+-i KEGG.KO.txt \
+-m ${db}/kegg/KO1-4.txt \
+-c 2,3,4 -s ',+,+,' -n raw \
+-o KEGG
+# Count the number of features at each level
+wc -l KEGG*
+
+
+
+  # Common problems
+
+  ## 1. file phred quality error - Fastq quality value 64 to 33
+
+  # Use head to view fastq files, phred64 quality values are mostly lowercase letters, need to use vsearch's --fastq_convert command to convert to generic phred33 format.
+
+  cd /c/amplicon/FAQ/01Q64Q33
+# Preview the phred64 format, note that the quality values in line 4 are mostly lowercase
+head -n4 test_64.fq
+# Convert the quality value 64 encoding format to 33
+vsearch --fastq_convert test_64.fq \
+--fastq_ascii 64 --fastq_asciiout 33 \
+--fastqout test.fq
+# View the converted 33 encoding format, quality values are mostly uppercase
+head -n4 test.fq
+
+# If it is Ion torrent sequencing result, because it is a non-mainstream sequencing platform, you need company conversion help to convert to standard Phred33 format file before you can use it.
+
+## 2. Sequence double ends have been merged - sample name added for single end sequences
+
+## Amplicon analysis requires sequence name as sample name + sequence number, double-ended sequences can be merged while adding sample name directly. Single-ended sequences, or double-ended merged sequences need to be added separately. Here, the --relabel in vsearch's --fastq_convert command is used to add the sample name
+
+cd /c/amplicon/FAQ/02relabel
+# View the file sequence name
+head -n1 test.fq
+# Rename the sequence by sample
+vsearch --fastq_convert test.fq \
+--relabel WT1.\
+--fastqout WT1.fq
+# View renaming results
+head -n1 WT1.fq
+
+## 3. data too large to use usearch clustering or denoising, replace vsearch
+
+# If the free version of usearch only is limited, you can reduce the amount of non-redundant data by increasing the minuniquesize parameter. OTU/ASV over 10,000 is too long for downstream analysis, make sure the OTU/ASV data is less than 5,000, it will not be limited in general, and it is also beneficial for downstream to carry out fast analysis.
+
+# Alternative vsearch clustering to generate OTU, but no automatic de novo de-chimerization function. Input 2155 sequences, output 661 before clustering.
+
+cd /c/amplicon/FAQ/03feature
+# Rename relabel, cluster by similar id=97%, no masking qmask
+# Record input sizein and output frequency sizeout
+vsearch --cluster_size uniques.fa \
+--relabel OTU_ --id 0.97 \
+--qmask none --sizein --sizeout \
+--centroids otus_raw.fa
+
+
+# de novo de-embedding again. 55 embedding, 606 non-embedding. Remove all OTU_1, no Usearch built-in de-embedding method is reasonable.
+
+# Self-comparison de-embedding
+vsearch --uchime_denovo otus_raw.fa \
+--nonchimeras otus.fa
+# Delete sequence frequencies
+sed -i 's/;. *//' otus.fa
+
+## 4. Read counts normalized to relative abundance
+
+cd /c/amplicon/FAQ/04norm
+## Find the frequency of abundance of each OTU in the sample (normalized to sum 1)
+usearch -otutab_counts2freqs otutab.txt \
+-output otutab_freq.txt
+
+## 5. run R prompt Permission denied
+
+## For example, when write.table saves a table, an example error message is as follows: It means that the write file has no permission, usually the target file is being opened, please close the relevant file and try again
+
+Error in file(file, ifelse(append, "a", "w")) :
+  Calls: write.table -> file
+: Warning message:
+  In file(file, ifelse(append, "a", "w")) :
+  'result/raw/otutab_nonBac.txt': Permission denied
+
+## 6. Batch naming of files
+
+## If we have files A1 and A2, write a form metadata.txt with sample names corresponding to target names, check if the sample names are unique, and use awk for batch renaming
+
+cd /c/amplicon/FAQ/06rename
+# (Optional) Quickly generate a list of files for editing metadata.txt, such as A1.fq modified to WT1.fastq, and so on, refer to metadata.bak.txt
+ls *.fq > metadata.txt
+# Edit the list, the second name is the final name, make sure the name is unique
+# Convert end-of-line newlines
+sed -i 's/\r//' metadata.txt
+# Check if manually named column 2 is unique
+cut -f 2 metadata.txt|wc -l
+cut -f 2 metadata.txt|sort|uniq|wc -l
+# Name non-redundant if results match twice
+# Optionally move mv, copy cp, hard chain ln, or soft chain ln -s
+# Copy cp is used here
+awk '{system("cp "$1" "$2)}' metadata.txt
+
+## 7. Terminal in Rstudio can't find Linux commands
+
+## Need to add C:\Program Files\Git\usr\bin directory to the system environment variable
+# File Explorer - This Computer - Properties - Advanced System Settings - Environment Variables --System Variables--Path--Edit--New-- --fill in "C:\Program Files\Git\usr\bin"--OK--OK ---OK
+# Note that Win10 system is a directory line; Win7 multiple directories separated by a semicolon, pay attention to add the directory backward
+
+## 8. usearch -alpha_div_rare results in the first two lines of "-"
+
+## Problem: "-" is added when sampling 0, and the tab is missing
+
+# Processing: replace "-" with "make character \t+0" to recover
+
+cd /c/amplicon/FAQ/08rare
+sed "s/-/\t0.0/g" alpha_rare_wrong.txt\
+> alpha_rare.txt
+
+## 9. species annotation otus.sintax direction all "-", need sequence to take reverse complement
+
+## is the original sequence direction is wrong, will filtered.fa sequence need to take the reverse complement. Start the analysis from the beginning again
+
+cd /c/amplicon/FAQ/09revcom
+vsearch --fastx_revcomp filtered_RC.fa \
+--fastaout filtered.fa
+
+## 10. windows line break view and delete
+
+## Windows newlines are newline($)+^M, which is equal to Linux newline+mac newline. Analysis of data in linux format as a common standard, so windows, such as excel written and saved as a text file (tab-delimited) (*.txt) table, the end of the line has an invisible ^M symbol, resulting in analysis errors. You can check this symbol with the command cat -A and remove it with sed.
+
+cd /c/amplicon/FAQ/10^M
+# See if there is a ^M at the end of the line
+cat -A metadata.txt
+# Delete ^M and write to a new file
+sed 's/\r//' metadata.txt > metadata.mod.txt
+# Check for success
+cat -A metadata.mod.txt
+
+# Delete the original file directly
+sed -i 's/\r//' metadata.txt
+
+## 11. UNITE database analysis reports errors
+
+#USEARCH uses the utax database downloaded by UNITE, prompting various errors
+
+cd /c/amplicon/FAQ/11unite
+# Unzip Unite's useach using the species annotation library
+gunzip -c utax_reference_dataset_all_04.02.2020.fasta.gz > unite.fa
+# Annotate ITS sequences with a default threshold of 0.8
+usearch --sintax otus.fa \
+--db unite.fa \
+--tabbedout otus.sintax --strand plus
+--sintax_cutoff 0.6
+
+# The error message is as follows.
+---Fatal error--
+  Missing x: in name >JN874928|SH1144646.08FU;tax=d:Metazoa,p:Cnidaria,c:Hydrozoa,o:Trachylina,f:,g:Craspedacusta,s:_Craspedacusta sowerbii_SH1144646.08FU;
+"Unprintable ASCII character no 195 on or right before line 236492"
+
+# The reason for this is that there are gaps in the classification level. This can be solved by using sed to fill in the gaps
+# There are gaps at the taxonomic level, sed
+sed -i 's/,;/,Unnamed;/;s/:,/:Unnamed,/g' unite.fa
+# Run the previous usearch --sintax command again
+# Note: vsearch is problematic, it is recommended to use usearch and add --strand plus at the end to run successfully
+
+## 12. Linux subsystem for Windows local installation of qiime2
+
+# Install the Windows subsystem, https://mp.weixin.qq.com/s/0PfA0bqdvrEbo62zPVq4kQ
+# Download, install and start conda
+wget -c https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh -b -f
+~/miniconda3/condabin/conda init
+# Close the terminal and reopen it
+# Installation package download link
+wget -c http://bailab.genetics.ac.cn/db/conda/qiime2-2022.11.tar.gz
+# New environment installation
+mkdir -p ~/miniconda3/envs/qiime2-2022.11
+tar -xzf qiime2-2022.11.tar.gz -C ~/miniconda3/envs/qiime2-2022.11
+# Activate and initialize the environment
+conda activate qiime2-2022.11
+conda unpack
+
+## 13. RDP 16-18 annotation results comparison
+
+# Count the number of gates in the sequence, from 60 down to 39
+grep '>' ${db}/usearch/rdp_16s_v16_sp.fa|cut -f2 -d ';'|cut -f1-2 -d ','|sort|uniq|wc -l
+grep '>' ${db}/usearch/rdp_16s_v18.fa|cut -f2 -d ';|cut -f1-2 -d ','|sort|uniq|wc -l
+    # Count the number of genera in the sequence, growing from 2517 to 3061
+    grep '>' ${db}/usearch/rdp_16s_v16_sp.fa|cut -f2 -d ';'|cut -f1-6 -d ','|sort|uniq|wc -l
+    grep '>' ${db}/usearch/rdp_16s_v18.fa|cut -f2 -d ';|cut -f1-6 -d ','|sort|uniq|wc -l
+
+cd /c/amplicon/FAQ/13rdp16_18
+# doors from 15 down to 13
+tail -n+2 rdp16_sintax.txt|cut -f3|sort|uniq -c|wc -l
+tail -n+2 rdp18_sintax.txt|cut -f3|sort|uniq -c|wc -l
+# genera from 176 down to 144
+tail -n+2 rdp16_sintax.txt|cut -f7|sort|uniq -c|wc -l
+tail -n+2 rdp18_sintax.txt|cut -f7|sort|uniq -c|wc -l
+
+# Version update log
+
+# - 2021/4/3 EasyAmplicon 1.11:
+#   - R package amplicon upgraded to 1.11.0, solve the problem of two columns of metadata reporting error.
+# - Adjusted course order to 2 sessions per day from 9am-12pm and 3 sessions from 1:30pm-6pm.
+# - Provide additional course Supp catalog.
+# - 2021/7/23 EasyAmplicon 1.12:
+#   - R runtime environment upgraded to 4.1.0, with a full package of 4.1.zip
+# - R package amplicon upgraded to 1.12.0, alpha_boxplot removed the index of Y-axis
+# - R adds normalization, transpose and other parameters, can be used to draw any feature box line diagram
+# - beta_pcoa/cpcoa.R add control ellipse, label display and other parameters
+# - tax_stackplot.R add multiple color schemes
+# - picurst process update, and provide packaged conda download
+# - picurst2 new KO merge into KEGG pathway level 1-3 code, and provide packaged conda download
+# - Random forest: provide classification level filtering, random number filtering, visual code
+# - 2021/10/15 EasyAmplicon 1.13:
+#   - R runtime environment upgraded to 4.1.1, accompanied by the latest full set of 4.1.zip package
+# - Metadata variance decomposition PERMANOVA: add adonis to Beta diversity analysis in Diversity-tutorial.Rmd to calculate the analysis rate and significance of variables on communities
+# - Treemap treemap without color before upgrade, change to code for reference and delete this part in Diversity_tutrial.Rmd
+# - alpha_boxplot output without default directory, can specify the file name header, add no ID error reporting comment
+# - 2022/1/7 EasyAmplicon 1.14:
+#   - R runtime environment upgraded to 4.1.2, with the latest full package of 4.1.zip
+# - RStudio updated to 2021.09.1
+# - Wentao rewrite the tax_maptree function in the amplicon package, without relying on other packages, to solve the problem of not being able to color
+# - EasyMicrobiome added compare_stamp.R script to draw STAMP extended histogram with direct difference comparison; see result/CompareStamp.Rmd for code details
+# - EasyMicrobiome added compare_hierarchy_facet.R and compare_hierarchy_facet2.R to show KEGG's level 1 and 2 overviews and variances
+#     - Updated advanced analysis catalog advanced: including environmental factors, Markerless chains, network modules, network comparisons, random forest classification, random forest regression, microecology, etc.
+# - 2023/2/3 EasyAmplicon 1.18:
+#     - R runtime environment upgraded to 4.2.2, with the latest full package of 4.2.zip
+#     - RStudio updated to 2022.12.0
+#     - amplicon, EasyAmplicon and EasyMicrobiome updated to 1.18
+#     - QIIME 2 updated to v2022.11
+#     - vsearch updated to v2.22.1
+#     - Added ggClusterNet course - Wentao
+#
+#
+# Quarterly video course schedule: http://www.ehbio.com/trainLongTerm/TrainLongTerm/amplicongenomeLearnGuide.html
+#
+# If used this script, please cited below.
+#
+# If used this script, please cited:
+#
+# **Yong-Xin Liu**, Yuan Qin, **Tong Chen**, et. al. A practical guide to amplicon and metagenomic analysis of microbiome data. **Protein Cell**, 2021(12) 5:315-330, doi: [10.1007/s13238-020-00724-8](https://doi.org/10.1007/s13238-020-00724-8)
+#
+# Copyright 2016-2023 Yong-Xin Liu <liuyongxin@caas.cn>, Tao Wen <taowen@njau.edu.cn>, Tong Chen <chent@nrc.ac.cn>
+
+
+# EasyMicrobiome
+
+EasyAmplicon and EasyMetagenome analysis processes rely on popular software, scripts and database annotation files, etc.
+
+Popular software, scripts and database annotation for EasyAmplicon and EasyMetagenome
+
+Version：EasyMicrobiome v1.18
+
+Update：2023/2/3
+
+Project homepage: https://github.com/yongxinliu/EasyMicrobiome
+Software installation(Install)
+
+The entire package is updated almost every week, and a stable version is updated once a quarter. It is recommended that you download the latest version and add it to the environment variables until it is ready for use.
+
+There are two ways to download the database: choose one or the other
+
+# Method 1. git download, you can use wget or download the zip file directly from the homepage
+git clone https://github.com/YongxinLiu/EasyMicrobiome
+
+# Method 2. alternate link download
+wget -c http://bailab.genetics.ac.cn/db/EasyMicrobiome.zip
+unzip EasyMicrobiome.zip
+
+Add linux command executable permissions
+
+chmod +x EasyMicrobiome/linux/*
+
+Add the software to the environment variable, otherwise you need to specify the full path of the software to use
+
+# Add environment variables temporarily
+export PATH=$PATH:`pwd`/EasyMicrobiome/linux:`pwd`/EasyMicrobiome/script"
+# Write variables to .bashrc to add environment variables permanently
+echo "PATH=$PATH:`pwd`/EasyMicrobiome/linux:`pwd`/EasyMicrobiome/script" >> ~/.bashrc
+
+Usage
+
+This software is a dependency package for Easy Amplicon and Easy Macro Genome. For detailed use, see the home page of each project at
+
+    Easy amplicon analysis process: https://github.com/YongxinLiu/EasyAmplicon
+
+    Easy macro genome analysis flow: https://github.com/YongxinLiu/EasyMetagenome
+
+The mapping part of the process, relying on more R packages, is recommended for use on Windows systems (it is more convenient to install R packages), while providing a collection of 4 hundred packages to download, saving installation time
+
+    R language 4.2 environment and R package: R language home page http://www.r-project.org , Windows version package collection http://bailab.genetics.ac.cn/db/R/4.2.zip
+
+Software List
+
+*Note: The links of the names correspond to the home pages of the software, most of which have been integrated into this project. For larger files, download links are provided before the title, and you need to download them yourself when using them.
+
+    linux：Analysis software under Linux system
+        microbiome_helper: microbiome analysis infusion helper scripts, such as metaphlan2 result conversion STAMP format (metaphlan_to_stamp.pl), picurst result function composition plot (plot_metagenome_contributions.R)
+        Miniconda2-latest-Linux-x86_64.sh: software manager https://repo.continuum.io/miniconda/Miniconda2-latest-Linux-x86_64.sh
+        qiime2-2022.11.tar.gz: QIIME2 installation package, extract to conda's envs directory available http://bailab.genetics.ac.cn/db/conda/qiime2-2022.11.tar.gz
+qiime2-2022.11-py36-linux-conda.yml: QIIME2 software installation manifest, installed online using conda
+sparcc: sparcc network analysis python script
+usearch: amplicon analysis process
+vsearch: amplicon analysis process (free 64-bit version of usearch)
+mac：Mac system analysis software
+csvtk: table analysis tool
+iqtree: evolutionary tree construction
+qiime2-2022.11-py38-osx-conda.yml: QIIME2 software installation list, online installation using conda
+R-4.2.0.pkg: R language installer
+RStudio-1.4.1106.dmg: RStudio installation package
+rush: parallel management tool
+seqkit: sequence processing tool
+taxonkit: NCBI classification processing tool
+usearch: amplicon analysis process
+vsearch: amplicon analysis process (free 64-bit version of usearch)
+win: analysis software for Windows
+Git-2.30.2-64-bit.exe: provides Git bash environment, download and install it yourself, see the tutorial: Windows easy to implement linux shell environment: gitforwindows
+R-4.2.0-win.exe: R language installation package, download the latest version: Downad CRAN - China Tsinghua - Download R for Windows (Mac) -- base - - Download R 4.2.0
+RStudio-1.4.1106.exe: RStudio installation package, provides analysis runtime interface.
+4.2.zip: a collection of 400+ packages commonly used in the R language, unzip it to the R package installation location and use it.
+usearch.exe: amplicon analysis process
+vsearch.exe: amplification sub-analysis process (free 64-bit version of usearch)
+STAMP2.1.3: microbiome graphical interface variance analysis tool
+Adobe_Illustrator_CC_2018_v22.1.0.314_x64_zh_CN_Portable.7z: picture puzzle, pattern drawing tool, use the trial version or buy it yourself
+Cytoscape_3_8_2_windows_64bit.exe: network analysis installation package
+csvtk.exe: table analysis tool
+seqkit.exe: sequence processing tool
+taxonkit.exe: NCBI classification processing tool
+rush.exe: parallel management tool
+epp510_1828_64bit.exe: text editor
+Xshell: remote access to the server terminal, you need to apply for a free version of the download link; alternative PuTTY
+FileZilla: remote access to the server file upload and download, alternative WinSCP
+gephi-0.9.2-windows.exe: network diagram drawing tool
+iqtree.exe: evolutionary tree construction
+libiomp5md.dll: dynamic library, when iqtree is missing, add it to the directory where the software is located
+jdk-11.0.7_windows-x64_bin.exe: Java runtime environment
+muscle.exe: multiple sequence comparison tool
+npp.7.8.9.Installer.x64.exe: text editor NotePad++ installation package
+rtools40-x86_64.exe: deduction tool for R source code installation
+wget.exe: command line download tool
+
+Database
+
+gg：GreenGenes bacteria 16S database
+gg_13_8_otus.tar.gz: OTU database updated in August '13 for usearch with reference to quantitative and PICRUSt/BugBase function prediction, QIIME 2 production classifier. Domestic backup link
+        16S_13_5_precalculated.tab.gz: picrust's GreenGenes 16S copy number
+ko_13_5_precalculated.tab.gz: information on the number of KOs corresponding to picrust's GreenGenes 16S
+    kegg: KEGG database description information collation
+        ko00001.keg: KEGG hierarchical annotation system, home page -- KEGG BRITE -- KEGG Orthology (KO) -- Download htext, download and save as ko00001.tsv
+        ko00001.tsv: convert jason format to tab-delimited KO corresponding description, (tertiary) pathway, secondary pathway and primary pathway information
+        KO1-4.txt: KO corresponding to the 3 levels of comments, including (tertiary) pathway, secondary pathway and primary pathway information, used for KO table classification summary
+        KO_description.txt: KO number corresponding to the functional description
+        KO_path.list: KO and Pathway (Pathway) correspondence, there is a KO exists in more than one pathway (1 to many)
+    usearch: usearch/vsearch species classification sintax command use database
+        rdp_16s_v16_sp.fa.gz: RDP16 database for 16S, compiled by usearch authors, more 16S, ITS and 18S databases are available at http://www.drive5.com/usearch/manual/sintax_downloads.html
+        rdp_16s_v18.fa.gz: RDP18 database for 16S, compiled by 2021 based on RDP database
+        utax_reference_dataset_all_04.02.2020.fasta.gz: ITS annotation database, downloadable from UNITE
+    eggnog: annotation file supplement for eggnog results
+        COG.anno: the first and second level annotations of COG
+
+scripts
+
+    Instructions for use: common script types for analysis
+        .R files are R scripts, which are executed using the Rscript command.
+        .sh is a Shell script, executed using the /bin/bash command
+        .pl is a Perl script, executed with the perl command
+        .py is a Python script, executed using python, note that there are also two types of scripts: python2 and python3
+
+    script: microbiome data analysis
+        BugBase: 16S amplicon phenotype prediction R script and database
+        FAPROTAX_1.2.4: 16S amplicon loop prediction Python script and database
+        table2itol: iTOL evolutionary tree annotation file to produce R scripts
+        alpha_barplot.R: Alpha diversity index barplot + standard deviation plotting
+        alpha_boxplot.R: Alpha diversity index box plot + statistics plotting
+        alpha_rare_curve.R: usearch calculation dilution curve visualization
+        beta_cpcoa.R: Restricted PCoA analysis and visualization of scatter plots based on distance matrix + group coloring + confidence ellipses, at least 3 groups required
+        beta_pcoa.R: distance matrix-based principal coordinate PCoA analysis and visualization of scatter plots + group coloring + confidence ellipses + two-by-two statistics between groups
+        BetaDiv.R: more Beta diversity analysis, such as PCA, PCoA, NMDS, LDA, CCA, RDA, etc.
+        compare.R: two groups comparison, support t.test, wilcox, edgeR three methods
+        compare_heatmap.R/sh: draw heatmap based on the results of two comparisons
+        compare_manhattan.sh: draws a Manhattan map based on the results of two comparisons
+        compare_volcano.R: draws a volcano map based on the results of the two comparisons
+        faprotax_report_sum.pl: FARPROTAX analysis result report collation
+        filter_feature_table.R: filter OTU table by frequency
+        format_dbcan2list.pl: dbcan database annotation results collation
+        format2lefse.R: OTU table and species annotations to generate LEfSe input file
+        format2stamp.R: OTU table and species annotations to generate STAMP input file
+        kegg_ko00001_htext2tsv.pl: KEGG annotation results collation
+        kraken2alpha.R: Kraken2 result collation, draw level and alpha diversity index calculation
+        mat_gene2ko.R: collapse table by type
+        metaphlan_boxplot.R: visualization of metaphalan2 results as box plots
+        metaphlan_hclust_heatmap.R: visualization of metaphalan2 results as clustering heat map
+        metaphlan_to_stamp.pl: metaphalan2 results converted to STAMP format
+        otu_mean.R: OTU table statistics group mean (overall mean), group summation
+        otutab_filter_nonBac.R: 16S OTU table to select bacteria, archaea and filter chloroplasts and mitochondria by sintax annotation results
+        otutab_filter_nonFungi.R: OTU table of ITS to select fungi
+        otutab_freq2count.R: convert frequencies to pseudo-integers for analyses requiring integer inputs, such as diversity, edgeR variance analysis, etc.
+        otutab_rare.R: OTU table draw level
+        plot_metagenome_contributions.R: functional composition plotting of PICRUSt resultant species
+        sp_pheatmap.sh: plotting heat map
+        sp_vennDiagram.sh: plotting Venn diagram
+        summarizeAbundance.py: collapse large table by type, e.g. genes merged by KO of KEGG
+        tax_circlize.R: species composition circle diagram
+        tax_maptree.R: species composition bubble plot
+        tax_stackplot.R: species composition stacked histogram
+
+If used this script, please cited below.
+
+If used this script, please cited:
+
+Yong-Xin Liu, Lei Chen, Tengfei Ma, Xiaofang Li, Maosheng Zheng, Xin Zhou, Liang Chen, Xubo Qian, Jiao Xi, Hongye Lu, Huiluo Cao, Xiaoya Ma, Bian Bian, Pengfan Zhang, Jiqiu Wu, Ren-You Gan, Baolei Jia, Linyang Sun, Zhicheng Ju, Yunyun Gao, Tao Wen, Tong Chen. 2023. EasyAmplicon: An easy-to-use, open- source, reproducible, and community source, reproducible, and community-based pipeline for amplicon data analysis in microbiome research. iMeta 2: e83. https://doi.org/10.1002/ imt2.83
+
+Copyright 2016-2023 Yong-Xin Liu liuyongxin@caas.cn, Tao Wen taowen@njau.edu.cn, Tong Chen chent@nrc.ac.cn
